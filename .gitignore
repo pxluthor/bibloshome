@@ -30,3 +30,4 @@ Thumbs.db
 *.sqlite3
 # Environment variables
 .env
+melhorias/

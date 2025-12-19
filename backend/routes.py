@@ -1,18 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException, Body, Response
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 from typing import List
 from database import get_session
-from models import Usuario, UsuarioCreate, UsuarioLogin, ListaLeitura, Livro
+from models import Usuario, UsuarioCreate, UsuarioLogin, ListaLeitura, Livro, Anotacao, AnotacaoUpdate, LivroRead
 from services import get_pdf_service, get_translation_service, PDFService, TranslationService
 from auth import get_password_hash, verify_password, create_access_token, get_current_user
 
 router = APIRouter()
 
-@router.get("/documents", response_model=List[Livro])
+@router.get("/documents", response_model=List[LivroRead])
 def list_documents(session: Session = Depends(get_session)):
-    livros = session.exec(select(Livro)).all()
-    return livros
+    return session.exec(select(Livro)).all()
 
 @router.get("/documents/{doc_id}/file")
 def get_document_file(
@@ -89,8 +88,8 @@ def login(user_data: UsuarioLogin, session: Session = Depends(get_session)):
     }
 
 # --- 3. ADICIONAR LIVRO À LISTA ---
-@router.post("/my-list/add")
-def add_to_list(
+@router.post("/my-list/add2")
+def add_to_listold(
     livro_id: int, 
     status: str = "quero_ler", # Opcional, padrão 'quero_ler'
     current_user: Usuario = Depends(get_current_user), # <--- Proteção via Token
@@ -119,9 +118,19 @@ def add_to_list(
     session.commit()
     return {"message": "Livro adicionado à lista", "status": "success"}
 
+@router.post("/my-list/add/{livro_id}")
+def add_to_list(livro_id: int, current_user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)):
+    check = session.exec(select(ListaLeitura).where(ListaLeitura.usuario_id == current_user.id, ListaLeitura.livro_id == livro_id)).first()
+    if check: return {"message": "Já está na lista"}
+    novo = ListaLeitura(usuario_id=current_user.id, livro_id=livro_id)
+    session.add(novo)
+    session.commit()
+    return {"status": "success"}
+
+
 # --- 4. VER MINHA LISTA ---
 @router.get("/my-list")
-def get_my_list(
+def get_my_listold(
     current_user: Usuario = Depends(get_current_user), 
     session: Session = Depends(get_session)
 ):
@@ -135,14 +144,21 @@ def get_my_list(
     # Formata a resposta
     minha_lista = []
     for item_lista, item_livro in results:
+        livro_dto = LivroRead.model_validate(item_livro)
         minha_lista.append({
             "list_id": item_lista.id,
             "status": item_lista.status,
             "data_adicao": item_lista.data_adicao,
-            "livro": item_livro
+            "livro": livro_dto
         })
         
     return minha_lista
+
+@router.get("/my-list")
+def get_my_list(current_user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)):
+    statement = select(ListaLeitura, Livro).where(ListaLeitura.livro_id == Livro.id, ListaLeitura.usuario_id == current_user.id)
+    results = session.exec(statement).all()
+    return [{"livro": LivroRead.model_validate(l), "status": ls.status} for ls, l in results]
 
 @router.delete("/my-list/remove/{livro_id}")
 def remove_from_list(
@@ -164,3 +180,65 @@ def remove_from_list(
     session.commit()
     
     return {"message": "Livro removido da lista", "status": "success"}
+
+@router.get("/documents/{doc_id}/cover")
+def get_cover(doc_id: int, session: Session = Depends(get_session)):
+    livro = session.get(Livro, doc_id)
+    if not livro or not livro.capa:
+        raise HTTPException(status_code=404)
+    return Response(content=livro.capa, media_type="image/jpeg")
+
+@router.get("/documents/{doc_id}/annotations")
+def get_annotations(
+    doc_id: int, 
+    current_user: Usuario = Depends(get_current_user), 
+    session: Session = Depends(get_session)
+):
+    # Busca anotação específica deste usuário para este livro
+    statement = select(Anotacao).where(
+        Anotacao.usuario_id == current_user.id,
+        Anotacao.livro_id == doc_id
+    )
+    anotacao = session.exec(statement).first()
+
+    if not anotacao:
+        # Se não houver nada, retorna estrutura vazia padrão
+        return {"bookmarks": [], "notes": {}, "highlights": {}}
+    
+    return anotacao.dados_json
+
+# --- 6. SALVAR/ATUALIZAR ANOTAÇÕES ---
+@router.post("/documents/{doc_id}/annotations")
+def save_annotations(
+    doc_id: int,
+    data: AnotacaoUpdate,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    # Tenta encontrar um registro existente
+    statement = select(Anotacao).where(
+        Anotacao.usuario_id == current_user.id,
+        Anotacao.livro_id == doc_id
+    )
+    anotacao_db = session.exec(statement).first()
+
+    if anotacao_db:
+        # Atualiza o registro existente
+        anotacao_db.dados_json = data.dict()
+        session.add(anotacao_db)
+    else:
+        # Cria um novo registro (Primeira vez que o usuário anota neste livro)
+        nova_anotacao = Anotacao(
+            usuario_id=current_user.id,
+            livro_id=doc_id,
+            dados_json=data.dict()
+        )
+        session.add(nova_anotacao)
+
+    session.commit()
+    return {"message": "Anotações salvas com sucesso"}
+
+
+@router.get("/auth/verify")
+def verify_token(current_user: Usuario = Depends(get_current_user)):
+    return {"status": "ok", "user": {"nome": current_user.nome, "id": current_user.id}}

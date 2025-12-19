@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../services/api';
 import { useNavigate, Link } from 'react-router-dom';
 import { LogIn, Lock, Mail } from 'lucide-react';
 
@@ -7,12 +7,15 @@ const Login = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
 
     const handleLogin = async (e) => {
         e.preventDefault();
+        setLoading(true);
+        setError('');
         try {
-            const response = await axios.post('http://localhost:8001/auth/login', {
+            const response = await api.post('/auth/login', {
                 email,
                 senha: password
             });
@@ -25,6 +28,8 @@ const Login = () => {
             navigate('/');
         } catch (err) {
             setError('Email ou senha inválidos');
+        } finally {
+            setLoading(false);
         }
     };
 
