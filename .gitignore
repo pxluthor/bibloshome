@@ -1,0 +1,32 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+
+# Pasta de testes
+__pycache__/
+test/
+# NODE
+node_modules/
+npm-debug.log
+yarn-error.log
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+# OS files
+.DS_Store
+Thumbs.db
+# Logs and databases
+*.log
+*.sqlite3
+# Environment variables
+.env
