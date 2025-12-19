@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+sqlmodel
+mysql-connector-python
+python-multipart
+python-dotenv
+pdfplumber
+deep-translator
