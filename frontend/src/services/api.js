@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Configuração base da API
 const api = axios.create({
-    baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8001',
+    baseURL: import.meta.env.VITE_API_URL || 'https://api.library.pxluthor.com.br',
     withCredentials: true, // Essencial para Cookies HttpOnly
 });
 

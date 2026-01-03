@@ -5,11 +5,14 @@ from database import create_db_and_tables
 
 app = FastAPI(title="PDF Translator API")
 
-# CORS Configuration
-origins = [
-    "http://localhost:5173",  # Vite default port
-    "http://localhost:3000",
-]
+#CORS Configuration
+origins = ["*"]
+#     "http://localhost:5173",  # Vite default port
+#     "http://localhost:3000",
+#     "https://library.pxluthor.com.br",
+#     "http://192.168.0.106:5173",
+# ]
+
 
 app.add_middleware(
     CORSMiddleware,
