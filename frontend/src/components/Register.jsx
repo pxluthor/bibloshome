@@ -15,7 +15,7 @@ const Register = () => {
     const handleRegister = async (e) => {
         e.preventDefault();
         try {
-            await axios.post('https://api.library.pxluthor.com.br/auth/register', formData);
+            await axios.post('https://api-library.pxluthor.com.br/auth/register', formData);
             alert("Cadastro realizado com sucesso! Faça login.");
             navigate('/login');
         } catch (err) {

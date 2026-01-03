@@ -30,4 +30,5 @@ Thumbs.db
 *.sqlite3
 # Environment variables
 .env
+.env.local
 melhorias/
