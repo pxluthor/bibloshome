@@ -1,3 +1,78 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Estilos básicos para o leitor de PDF */
+.react-pdf__Page {
+  background-color: white;
+}
+
+/* Camada de texto - posicionada acima do canvas em todos os dispositivos */
+.react-pdf__Page__textLayer {
+  opacity: 1 !important;
+  z-index: 100 !important;
+  position: relative;
+  mix-blend-mode: normal !important; /* Garante que as cores não se misturem com o fundo */
+}
+
+/* 
+   ESTRATÉGIA PARA ELIMINAR TEXTO FANTASMA EM TODOS OS DISPOSITIVOS:
+   Quando qualquer texto é selecionado, criamos um fundo branco sólido que
+   "tapa" completamente o canvas por baixo.
+*/
+.react-pdf__Page__textLayer span::selection {
+  background-color: #ffffff !important;
+  color: #000000 !important;
+  -webkit-text-fill-color: #000000 !important;
+  text-shadow: none !important;
+}
+
+/* Aplica também para tags <font> do tradutor */
+.react-pdf__Page__textLayer font::selection {
+  background-color: #ffffff !important;
+  color: #000000 !important;
+  -webkit-text-fill-color: #000000 !important;
+  text-shadow: none !important;
+}
+
+/* 
+   SOLUÇÃO PARA TEXTO FANTASMA:
+   Quando há uma seleção ativa, reduzimos a opacidade da imagem do PDF (canvas) para 20%.
+   Isso faz com que o texto original fique muito claro, eliminando a confusão visual,
+   enquanto o texto selecionado (acima) permanece preto e sólido.
+*/
+.selection-active .react-pdf__Page__canvas {
+  opacity: 0.2 !important;
+  transition: opacity 0.2s ease;
+}
+
+/* Suporte para tags <font> do Google Tradutor */
+.react-pdf__Page__textLayer font {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  color: #000000 !important;
+  -webkit-text-fill-color: #000000 !important;
+  text-shadow: none !important;
+}
+
+/* 
+   GARANTIR QUE O MENU DE SELEÇÃO ESTEJA SEMPRE VISÍVEL
+   Z-index alto para ficar acima de todos os elementos
+*/
+.fixed.z-\[60\] {
+  z-index: 9999 !important;
+  pointer-events: auto !important; /* Garante que o toque seja registrado no botão */
+}
+
+/* Ajuste de posicionamento para mobile */
+@media (max-width: 1024px) {
+  .react-pdf__Page__textLayer {
+    -webkit-touch-callout: none !important; /* Desabilita o menu nativo (copiar/colar) no iOS/Android */
+  }
+
+  .react-pdf__Page__textLayer span::selection,
+  .react-pdf__Page__textLayer font::selection {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    -webkit-text-fill-color: #000000 !important;
+  }
+}

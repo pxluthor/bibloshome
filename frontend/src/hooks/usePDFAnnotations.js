@@ -5,6 +5,8 @@ export const usePDFAnnotations = (docId) => {
     const [bookmarks, setBookmarks] = useState([]);
     const [notes, setNotes] = useState({});
     const [highlights, setHighlights] = useState({});
+    const [lastPage, setLastPage] = useState(null);
+    const [totalPages, setTotalPages] = useState(null);
     const [isSaving, setIsSaving] = useState(false);
     const saveTimeoutRef = useRef(null);
 
@@ -17,6 +19,8 @@ export const usePDFAnnotations = (docId) => {
                 setBookmarks(response.data.bookmarks || []);
                 setNotes(response.data.notes || {});
                 setHighlights(response.data.highlights || {});
+                setLastPage(response.data.lastPage || 1);
+                setTotalPages(response.data.totalPages || null);
             } catch (err) {
                 console.error("Erro ao carregar anotações", err);
             }
@@ -31,7 +35,9 @@ export const usePDFAnnotations = (docId) => {
             await api.post(`/documents/${docId}/annotations`, {
                 bookmarks: updated.bookmarks ?? bookmarks,
                 notes: updated.notes ?? notes,
-                highlights: updated.highlights ?? highlights
+                highlights: updated.highlights ?? highlights,
+                lastPage: updated.lastPage ?? lastPage,
+                totalPages: updated.totalPages ?? totalPages
             });
         } catch (err) {
             console.error("Erro ao sincronizar com o banco:", err);
@@ -67,5 +73,17 @@ export const usePDFAnnotations = (docId) => {
         sync({ highlights: next });
     };
 
-    return { bookmarks, notes, highlights, isSaving, toggleBookmark, updateNote, addHighlight, removeHighlight };
+    const updateLastPage = (page) => {
+        setLastPage(page);
+        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = setTimeout(() => sync({ lastPage: page }), 1000);
+    };
+
+    const updateTotalPages = (total) => {
+        setTotalPages(total);
+        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = setTimeout(() => sync({ totalPages: total }), 1000);
+    };
+
+    return { bookmarks, notes, highlights, isSaving, lastPage, totalPages, toggleBookmark, updateNote, addHighlight, removeHighlight, updateLastPage, updateTotalPages };
 };

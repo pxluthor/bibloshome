@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Body, Response
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 from typing import List
+from datetime import datetime
 from database import get_session
-from models import Usuario, UsuarioCreate, UsuarioLogin, ListaLeitura, Livro, Anotacao, AnotacaoUpdate, LivroRead
+from models import Usuario, UsuarioCreate, UsuarioLogin, ListaLeitura, ListaLeituraUpdate, Livro, Anotacao, AnotacaoUpdate, LivroRead, LivroUpdate, PedidoLivro, PedidoLivroCreate, PedidoLivroUpdate
 from services import get_pdf_service, get_translation_service, PDFService, TranslationService
 from auth import get_password_hash, verify_password, create_access_token, get_current_user
 
@@ -26,6 +27,49 @@ def get_document_file(
     # Assuming 'caminho' contains the filename
     file_path = pdf_service.get_file_path(livro.caminho)
     return FileResponse(file_path, media_type="application/pdf", filename=livro.caminho)
+
+@router.get("/documents/{doc_id}/details", response_model=LivroRead)
+def get_book_details(
+    doc_id: int,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Retorna detalhes completos de um livro (para edição)"""
+    livro = session.get(Livro, doc_id)
+    if not livro:
+        raise HTTPException(status_code=404, detail="Livro não encontrado")
+    
+    # Apenas admin pode ver detalhes completos
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Acesso negado. Apenas administradores.")
+    
+    return LivroRead.model_validate(livro)
+
+@router.put("/documents/{doc_id}/update")
+def update_book(
+    doc_id: int,
+    book_update: LivroUpdate,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    """Atualiza os dados de um livro (apenas admin)"""
+    # Verifica se é admin
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Acesso negado. Apenas administradores.")
+    
+    livro = session.get(Livro, doc_id)
+    if not livro:
+        raise HTTPException(status_code=404, detail="Livro não encontrado")
+    
+    # Atualiza apenas os campos fornecidos
+    update_data = book_update.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(livro, key, value)
+    
+    session.add(livro)
+    session.commit()
+    
+    return {"message": "Livro atualizado com sucesso", "livro": LivroRead.model_validate(livro)}
 
 @router.post("/documents/{doc_id}/page/{page_number}/translate")
 def translate_page(
@@ -60,8 +104,8 @@ def register(user: UsuarioCreate, session: Session = Depends(get_session)):
     
     # Cria usuário com senha hash
     hashed_password = get_password_hash(user.senha)
-    # Importante: O SQL espera 'nome', 'email', 'senha_hash'
-    novo_usuario = Usuario(nome=user.nome, email=user.email, senha_hash=hashed_password)
+    # Importante: O SQL espera 'nome', 'email', 'senha_hash', 'is_admin'
+    novo_usuario = Usuario(nome=user.nome, email=user.email, senha_hash=hashed_password, is_admin=user.is_admin)
     
     session.add(novo_usuario)
     session.commit()
@@ -84,7 +128,8 @@ def login(user_data: UsuarioLogin, session: Session = Depends(get_session)):
         "access_token": access_token, 
         "token_type": "bearer", 
         "user_name": user.nome,
-        "user_id": user.id
+        "user_id": user.id,
+        "is_admin": user.is_admin
     }
 
 # --- 3. ADICIONAR LIVRO À LISTA ---
@@ -127,38 +172,65 @@ def add_to_list(livro_id: int, current_user: Usuario = Depends(get_current_user)
     session.commit()
     return {"status": "success"}
 
+# Atualizar status de leitura (Ex: quero_ler -> lendo -> concluido)
+@router.put("/my-list/{livro_id}/status")
+def update_list_status(
+    livro_id: int,
+    status_data: ListaLeituraUpdate,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    statement = select(ListaLeitura).where(
+        ListaLeitura.usuario_id == current_user.id,
+        ListaLeitura.livro_id == livro_id
+    )
+    item = session.exec(statement).first()
+    
+    if not item:
+        # Se não estiver na lista, adiciona automaticamente com o status novo
+        novo_item = ListaLeitura(usuario_id=current_user.id, livro_id=livro_id, status=status_data.status)
+        session.add(novo_item)
+    else:
+        item.status = status_data.status
+        session.add(item)
+        
+    session.commit()
+    return {"status": "success", "new_status": status_data.status}
 
 # --- 4. VER MINHA LISTA ---
 @router.get("/my-list")
-def get_my_listold(
-    current_user: Usuario = Depends(get_current_user), 
-    session: Session = Depends(get_session)
-):
-    # Faz um JOIN para trazer os dados do Livro junto com o status da Lista
-    statement = select(ListaLeitura, Livro).where(
-        ListaLeitura.livro_id == Livro.id,
-        ListaLeitura.usuario_id == current_user.id
-    )
+def get_my_list(current_user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)):
+    # Busca ListaLeitura, Livro e Anotacao (para pegar o progresso)
+    statement = select(ListaLeitura, Livro, Anotacao).join(Livro, ListaLeitura.livro_id == Livro.id).outerjoin(
+        Anotacao, 
+        (Anotacao.livro_id == Livro.id) & (Anotacao.usuario_id == current_user.id)
+    ).where(ListaLeitura.usuario_id == current_user.id)
+    
     results = session.exec(statement).all()
     
-    # Formata a resposta
-    minha_lista = []
-    for item_lista, item_livro in results:
-        livro_dto = LivroRead.model_validate(item_livro)
-        minha_lista.append({
-            "list_id": item_lista.id,
-            "status": item_lista.status,
-            "data_adicao": item_lista.data_adicao,
-            "livro": livro_dto
-        })
+    response = []
+    for lista_item, livro_item, anotacao_item in results:
+        last_page = 1
+        total_pages = None
         
-    return minha_lista
-
-@router.get("/my-list")
-def get_my_list(current_user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)):
-    statement = select(ListaLeitura, Livro).where(ListaLeitura.livro_id == Livro.id, ListaLeitura.usuario_id == current_user.id)
-    results = session.exec(statement).all()
-    return [{"livro": LivroRead.model_validate(l), "status": ls.status} for ls, l in results]
+        if anotacao_item and anotacao_item.dados_json:
+            last_page = anotacao_item.dados_json.get("lastPage", 1)
+            total_pages = anotacao_item.dados_json.get("totalPages", None)
+        
+        # Se não tiver totalPages no JSON, usa o valor do banco de dados
+        if total_pages is None:
+            total_pages = livro_item.paginas
+        
+        # Valida o livro com LivroRead para incluir todos os campos necessários
+        livro_read = LivroRead.model_validate(livro_item)
+        
+        response.append({
+            "livro": livro_read,
+            "status": lista_item.status,
+            "current_page": last_page,
+            "total_pages": total_pages
+        })
+    return response
 
 @router.delete("/my-list/remove/{livro_id}")
 def remove_from_list(
@@ -239,6 +311,180 @@ def save_annotations(
     return {"message": "Anotações salvas com sucesso"}
 
 
+# --- PEDIDOS DE LIVROS ---
+
+# Criar um novo pedido
+@router.post("/pedidos")
+def create_pedido(
+    pedido: PedidoLivroCreate,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    novo_pedido = PedidoLivro(
+        usuario_id=current_user.id,
+        titulo=pedido.titulo,
+        autor=pedido.autor,
+        editora=pedido.editora,
+        observacoes=pedido.observacoes
+    )
+    session.add(novo_pedido)
+    session.commit()
+    session.refresh(novo_pedido)
+    return {"message": "Pedido criado com sucesso", "pedido_id": novo_pedido.id}
+
+# Listar todos os pedidos do usuário atual
+@router.get("/pedidos/meus")
+def get_my_pedidos(
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    statement = select(PedidoLivro).where(PedidoLivro.usuario_id == current_user.id).order_by(PedidoLivro.data_criacao.desc())
+    pedidos = session.exec(statement).all()
+    
+    resultado = []
+    for pedido in pedidos:
+        resultado.append({
+            "id": pedido.id,
+            "titulo": pedido.titulo,
+            "autor": pedido.autor,
+            "editora": pedido.editora,
+            "status": pedido.status,
+            "observacoes": pedido.observacoes,
+            "data_criacao": pedido.data_criacao,
+            "data_atualizacao": pedido.data_atualizacao
+        })
+    
+    return resultado
+
+# Listar todos os pedidos (apenas admin)
+@router.get("/pedidos")
+def get_all_pedidos(
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    # Verifica se é admin
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Acesso negado. Apenas administradores.")
+    
+    statement = select(PedidoLivro).order_by(PedidoLivro.data_criacao.desc())
+    pedidos = session.exec(statement).all()
+    
+    resultado = []
+    for pedido in pedidos:
+        # Busca nome do usuário
+        usuario = session.get(Usuario, pedido.usuario_id)
+        resultado.append({
+            "id": pedido.id,
+            "usuario_id": pedido.usuario_id,
+            "usuario_nome": usuario.nome if usuario else "Desconhecido",
+            "usuario_email": usuario.email if usuario else "Desconhecido",
+            "titulo": pedido.titulo,
+            "autor": pedido.autor,
+            "editora": pedido.editora,
+            "status": pedido.status,
+            "observacoes": pedido.observacoes,
+            "data_criacao": pedido.data_criacao,
+            "data_atualizacao": pedido.data_atualizacao
+        })
+    
+    return resultado
+
+# Atualizar status do pedido (apenas admin)
+@router.put("/pedidos/{pedido_id}/status")
+def update_pedido_status(
+    pedido_id: int,
+    update: PedidoLivroUpdate,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    # Verifica se é admin
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Acesso negado. Apenas administradores.")
+    
+    pedido = session.get(PedidoLivro, pedido_id)
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+    
+    # Valida o status
+    valid_statuses = ["pendente", "em_analise", "aprovado", "recusado"]
+    if update.status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Status inválido. Deve ser um de: {', '.join(valid_statuses)}")
+    
+    pedido.status = update.status
+    pedido.data_atualizacao = datetime.utcnow()
+    session.add(pedido)
+    session.commit()
+    
+    return {"message": "Status atualizado com sucesso"}
+
+# Cancelar pedido (apenas o próprio usuário e apenas se estiver pendente)
+@router.delete("/pedidos/{pedido_id}")
+def delete_pedido(
+    pedido_id: int,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    pedido = session.get(PedidoLivro, pedido_id)
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+    
+    # Verifica se o pedido pertence ao usuário
+    if pedido.usuario_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Você só pode cancelar seus próprios pedidos")
+    
+    # Verifica se o pedido está pendente
+    if pedido.status != "pendente":
+        raise HTTPException(status_code=400, detail="Apenas pedidos pendentes podem ser cancelados")
+    
+    session.delete(pedido)
+    session.commit()
+    
+    return {"message": "Pedido cancelado com sucesso"}
+
+
 @router.get("/auth/verify")
 def verify_token(current_user: Usuario = Depends(get_current_user)):
-    return {"status": "ok", "user": {"nome": current_user.nome, "id": current_user.id}}
+    return {"status": "ok", "user": {"nome": current_user.nome, "id": current_user.id, "is_admin": current_user.is_admin}}
+
+# --- ATUALIZAR PÁGINAS DOS LIVROS ---
+@router.post("/admin/update-pages")
+def update_all_pages(
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    pdf_service: PDFService = Depends(get_pdf_service)
+):
+    """Atualiza o número de páginas de todos os livros no banco de dados"""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Acesso negado. Apenas administradores.")
+    
+    livros = session.exec(select(Livro)).all()
+    updated_count = 0
+    errors = []
+    
+    for livro in livros:
+        try:
+            if not livro.caminho:
+                errors.append(f"Livro {livro.id} ({livro.titulo}): sem caminho")
+                continue
+            
+            file_path = pdf_service.get_file_path(livro.caminho)
+            page_count = pdf_service.count_pages(file_path)
+            
+            livro.paginas = page_count
+            session.add(livro)
+            updated_count += 1
+            print(f"✓ Livro {livro.id} ({livro.titulo}): {page_count} páginas")
+            
+        except Exception as e:
+            error_msg = f"Livro {livro.id} ({livro.titulo}): {str(e)}"
+            errors.append(error_msg)
+            print(f"✗ {error_msg}")
+    
+    session.commit()
+    
+    return {
+        "message": f"Atualização concluída: {updated_count} livros atualizados",
+        "updated_count": updated_count,
+        "total_count": len(livros),
+        "errors": errors
+    }

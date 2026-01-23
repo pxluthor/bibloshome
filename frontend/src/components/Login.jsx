@@ -20,9 +20,11 @@ const Login = () => {
                 senha: password
             });
 
-            // Salvar token
+            // Salvar token e dados do usuário
             localStorage.setItem('token', response.data.access_token);
             localStorage.setItem('userName', response.data.user_name);
+            localStorage.setItem('userId', response.data.user_id);
+            localStorage.setItem('isAdmin', response.data.is_admin);
 
             // Redirecionar para home
             navigate('/');
@@ -37,8 +39,11 @@ const Login = () => {
         <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
             <div className="bg-white w-full max-w-md rounded-lg shadow-2xl p-8">
                 <div className="text-center mb-8">
-                    <h1 className="text-3xl font-bold text-gray-800">Bem-vindo</h1>
-                    <p className="text-gray-500">Entre para acessar seus livros</p>
+                    <div className="text-3xl font-bold mb-2">
+                        <span className="text-blue-600">Library</span><span className="text-green-600">Anywhere</span>
+                    </div>
+                    <p className="text-gray-800 text-lg font-semibold">Seja bem vindo</p>
+                    <p className="text-gray-400">Entre para acessar seus livros de qualquer lugar</p>
                 </div>
 
                 {error && <div className="bg-red-100 text-red-700 p-3 rounded mb-4 text-sm">{error}</div>}

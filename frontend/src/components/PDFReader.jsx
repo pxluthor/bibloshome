@@ -28,15 +28,18 @@ const PDFReader = () => {
     const { id } = useParams();
     const navigate = useNavigate();
     const containerRef = useRef(null);
+    const mainRef = useRef(null);
+    const selectionTimeoutRef = useRef(null);
 
     const { sidebarWidth, isResizing, startResizing } = useSidebarResizer(400);
     const {
-        bookmarks, notes, highlights, isSaving,
-        toggleBookmark, updateNote, addHighlight, removeHighlight
+        bookmarks, notes, highlights, isSaving, lastPage, totalPages,
+        toggleBookmark, updateNote, addHighlight, removeHighlight, updateLastPage, updateTotalPages
     } = usePDFAnnotations(id);
 
     
     const [pageNumber, setPageNumber] = useState(1);
+    const [inputPage, setInputPage] = useState(1);
     const [numPages, setNumPages] = useState(null);
     const [scale, setScale] = useState(window.innerWidth < 768 ? 0.6 : 1.2);
     const [isDoublePage, setIsDoublePage] = useState(false);
@@ -46,6 +49,9 @@ const PDFReader = () => {
     const [selectionMenu, setSelectionMenu] = useState(null);
     const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 1024);
     const [isFullscreen, setIsFullscreen] = useState(false);
+    const [hasSelection, setHasSelection] = useState(false);
+    const [readingStatus, setReadingStatus] = useState(null); // Estado para controlar se é 'lendo', 'concluido', etc.
+    const initializedRef = useRef(false);
 
     // MEMOIZAÇÃO DO PDF - Evita recarregamento ao trocar abas ou redimensionar
     const pdfFile = useMemo(() => ({
@@ -61,6 +67,56 @@ const PDFReader = () => {
             document.exitFullscreen();
         }
     };
+
+    // Restaura a última página lida ao carregar
+    useEffect(() => {
+        if (lastPage && lastPage > 1 && !initializedRef.current) {
+            setPageNumber(lastPage);
+            initializedRef.current = true;
+        }
+    }, [lastPage]);
+
+    // Salva a página atual sempre que ela mudar
+    useEffect(() => {
+        if (pageNumber && pageNumber > 0) {
+            updateLastPage(pageNumber);
+        }
+    }, [pageNumber]);
+
+    // Resetar estado ao trocar de livro
+    useEffect(() => {
+        setPageNumber(1);
+        initializedRef.current = false;
+    }, [id]);
+
+    // Busca o status inicial do livro na lista do usuário
+    useEffect(() => {
+        const fetchStatus = async () => {
+            try {
+                const response = await api.get('/my-list');
+                const item = response.data.find(i => i.livro.id === parseInt(id));
+                if (item) setReadingStatus(item.status);
+            } catch (error) {
+                console.error("Erro ao buscar status:", error);
+            }
+        };
+        fetchStatus();
+    }, [id]);
+
+    // Atualiza o status automaticamente baseado no progresso
+    useEffect(() => {
+        if (!numPages) return;
+
+        const updateStatus = async (newStatus) => {
+            try {
+                await api.put(`/my-list/${id}/status`, { status: newStatus });
+                setReadingStatus(newStatus);
+            } catch (error) { console.error("Erro ao atualizar status:", error); }
+        };
+
+        if (pageNumber > 1 && (!readingStatus || readingStatus === 'quero_ler')) updateStatus('lendo');
+        else if (pageNumber === numPages && numPages > 1 && readingStatus === 'lendo') updateStatus('concluido');
+    }, [pageNumber, numPages, readingStatus, id]);
 
     useEffect(() => {
         const handleFSChange = () => setIsFullscreen(!!document.fullscreenElement);
@@ -82,17 +138,50 @@ const PDFReader = () => {
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [numPages, isDoublePage]);
 
-    const handleTextSelection = () => {
-        if (isResizing) return;
-        const selection = window.getSelection();
-        if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-            setSelectionMenu(null);
-            return;
-        }
-        const range = selection.getRangeAt(0);
-        const rect = range.getBoundingClientRect();
-        setSelectionMenu({ x: rect.left + (rect.width / 2), y: rect.top + window.scrollY - 10, range: range });
-    };
+    useEffect(() => {
+        setInputPage(pageNumber);
+    }, [pageNumber]);
+
+    // Monitora mudanças na seleção (funciona melhor em mobile/tablet com handles nativos)
+    useEffect(() => {
+        const handleSelectionChange = () => {
+            // Detecção imediata para aplicar o efeito de "foco" e reduzir o fantasma
+            const selection = window.getSelection();
+            // Verificação robusta: checa anchorNode E focusNode para garantir detecção em mobile
+            // Em dispositivos móveis, o ponto de ancoragem pode variar dependendo da direção da seleção
+            const isPdfSelection = selection && 
+                                 selection.rangeCount > 0 && 
+                                 !selection.isCollapsed && 
+                                 mainRef.current && 
+                                 (mainRef.current.contains(selection.anchorNode) || (selection.focusNode && mainRef.current.contains(selection.focusNode)));
+            setHasSelection(!!isPdfSelection);
+
+            if (isResizing) return;
+
+            if (selectionTimeoutRef.current) {
+                clearTimeout(selectionTimeoutRef.current);
+            }
+
+            // Delay para aguardar o fim do ajuste dos handles de seleção no mobile
+            selectionTimeoutRef.current = setTimeout(() => {
+                const selection = window.getSelection();
+                if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+                    setSelectionMenu(null);
+                    return;
+                }
+
+                const range = selection.getRangeAt(0);
+                const rect = range.getBoundingClientRect();
+
+                if (rect.width === 0 || rect.height === 0) return;
+
+                setSelectionMenu({ x: rect.left + (rect.width / 2), y: rect.top - 10, range: range });
+            }, 500);
+        };
+
+        document.addEventListener('selectionchange', handleSelectionChange);
+        return () => document.removeEventListener('selectionchange', handleSelectionChange);
+    }, [isResizing]);
 
     const applyHighlight = (colorHex, targetPage) => {
         if (!selectionMenu || !selectionMenu.range) return;
@@ -111,8 +200,80 @@ const PDFReader = () => {
         setSelectionMenu(null);
     };
 
+    const handleTranslateFromSelection = async () => {
+        const selection = window.getSelection();
+        const selectedText = selection.toString();
+        
+        if (!selectedText) {
+            setTranslation("<p class='text-red-500'>Por favor, selecione um texto primeiro.</p>");
+            return;
+        }
+        
+        setLoadingTranslation(true);
+        setTranslation("<div class='flex items-center justify-center h-full'><div class='animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600'></div></div>");
+        
+        try {
+            // Copiar para clipboard
+            await navigator.clipboard.writeText(selectedText);
+            
+            // Pequeno delay para o navegador processar a tradução
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+            // Ler de volta (já traduzido pelo navegador)
+            const translatedText = await navigator.clipboard.readText();
+            
+            // Exibir no painel lateral
+            setTranslation(`<p class="whitespace-pre-wrap">${translatedText}</p>`);
+        } catch (error) {
+            console.error('Erro ao traduzir:', error);
+            setTranslation(`<p class='text-red-500'>Erro ao traduzir: ${error.message}</p>`);
+        } finally {
+            setLoadingTranslation(false);
+        }
+    };
+
     const handleTranslate = () => {
-        setTranslation("<div style='text-align: center; padding: 20px; color: #4b5563;'><strong>Disponível em breve!</strong></div>");
+        handleTranslateFromSelection();
+    };
+
+    const handlePageSubmit = (e) => {
+        e.preventDefault();
+        const page = parseInt(inputPage);
+        if (page && page >= 1 && page <= (numPages || 1)) {
+            setPageNumber(page);
+        } else {
+            setInputPage(pageNumber);
+        }
+    };
+
+    // Lógica de Swipe para Mobile
+    const touchStartX = useRef(null);
+    const touchStartY = useRef(null);
+
+    const handleTouchStart = (e) => {
+        touchStartX.current = e.changedTouches[0].clientX;
+        touchStartY.current = e.changedTouches[0].clientY;
+    };
+
+    const handleTouchEnd = (e) => {
+        if (touchStartX.current === null) return;
+        
+        const touchEndX = e.changedTouches[0].clientX;
+        const touchEndY = e.changedTouches[0].clientY;
+        
+        const diffX = touchStartX.current - touchEndX;
+        const diffY = touchStartY.current - touchEndY;
+
+        touchStartX.current = null;
+        touchStartY.current = null;
+
+        if (window.getSelection().toString().length > 0) return; // Ignora se estiver selecionando texto
+        if (Math.abs(diffY) > Math.abs(diffX)) return; // Ignora scroll vertical
+
+        if (Math.abs(diffX) > 50) {
+            if (diffX > 0) goToNextPage();
+            else goToPrevPage();
+        }
     };
 
     const renderHighlightLayer = (pNum) => (
@@ -134,11 +295,22 @@ const PDFReader = () => {
         <div ref={containerRef} className="flex h-screen bg-gray-900 text-gray-100 overflow-hidden select-none">
             
             {selectionMenu && (
-                <div className="fixed z-[60] bg-white shadow-2xl rounded-full p-2 flex gap-2 border border-gray-200" style={{ left: selectionMenu.x, top: selectionMenu.y, transform: 'translate(-50%, -100%)' }}>
+                <div className="fixed bg-white shadow-2xl rounded-full p-2 flex gap-2 border border-gray-200 z-[60]" style={{ left: Math.max(60, Math.min(window.innerWidth - 60, selectionMenu.x)), top: selectionMenu.y, transform: 'translate(-50%, -100%)' }}>
                     {HIGHLIGHT_COLORS.map(color => (
-                        <button key={color.id} onClick={() => applyHighlight(color.hex, pageNumber)} className="w-8 h-8 rounded-full border border-gray-300 hover:scale-110 transition shadow-sm" style={{ backgroundColor: color.hex }} />
+                        <button key={color.id} onClick={() => applyHighlight(color.hex, pageNumber)} className="w-8 h-8 md:w-8 md:h-8 rounded-full border border-gray-300 hover:scale-110 transition shadow-sm flex-shrink-0" style={{ backgroundColor: color.hex }} />
                     ))}
-                    <button onClick={() => setSelectionMenu(null)} className="p-1 text-gray-500 hover:text-red-500 ml-1"><X size={18} /></button>
+                    <button 
+                        onClick={() => {
+                            handleTranslateFromSelection();
+                            setSelectionMenu(null);
+                        }} 
+                        className="w-8 h-8 md:w-8 md:h-8 rounded-full border border-blue-300 bg-blue-50 hover:bg-blue-100 hover:scale-110 transition shadow-sm flex items-center justify-center flex-shrink-0"
+                        title="Traduzir seleção"
+                        aria-label="Traduzir seleção"
+                    >
+                        <Languages size={16} className="text-blue-600" />
+                    </button>
+                    <button onClick={() => setSelectionMenu(null)} className="p-1 text-gray-500 hover:text-red-500 flex-shrink-0" aria-label="Fechar menu"><X size={18} /></button>
                 </div>
             )}
 
@@ -162,9 +334,23 @@ const PDFReader = () => {
                     <button onClick={goToPrevPage} disabled={pageNumber <= 1} className="p-1 hover:text-blue-400 disabled:opacity-30">
                         <ChevronLeft size={22} />
                     </button>
-                    <span className="text-xs font-mono min-w-[50px] md:min-w-[80px] text-center">
-                        {pageNumber} / {numPages || '--'}
-                    </span>
+                    <form onSubmit={handlePageSubmit} className="flex items-center justify-center gap-1">
+                        <input 
+                            type="number" 
+                            min={1} 
+                            max={numPages || ''}
+                            value={inputPage}
+                            onChange={(e) => setInputPage(e.target.value)}
+                            onBlur={handlePageSubmit}
+                            className="w-12 bg-transparent text-center text-sm font-mono focus:outline-none text-white appearance-none m-0 border-b border-transparent focus:border-blue-500 transition-colors p-0"
+                            style={{ 
+                                MozAppearance: 'textfield', 
+                                WebkitAppearance: 'none',
+                                backgroundColor: 'transparent' 
+                            }}
+                        />
+                        <span className="text-sm font-mono text-gray-400 select-none">/ {numPages || '--'}</span>
+                    </form>
                     <button onClick={goToNextPage} disabled={pageNumber >= numPages} className="p-1 hover:text-blue-400 disabled:opacity-30">
                         <ChevronRight size={22} />
                     </button>
@@ -190,10 +376,17 @@ const PDFReader = () => {
             </header>
 
             <div className="flex w-full h-full pt-14">
-                <main className={`flex-1 bg-gray-600 overflow-auto p-4 flex justify-center select-text transition-all ${isResizing ? 'pointer-events-none' : ''}`} onMouseUp={handleTextSelection}>   
+                <main ref={mainRef} className={`flex-1 bg-gray-600 overflow-auto p-4 flex justify-center select-text transition-all ${isResizing ? 'pointer-events-none' : ''} ${hasSelection ? 'selection-active' : ''}`} 
+                      onScroll={() => setSelectionMenu(null)}
+                      onContextMenu={(e) => e.preventDefault()}
+                      onTouchStart={handleTouchStart}
+                      onTouchEnd={handleTouchEnd}>
                     <Document 
                         file={pdfFile}
-                        onLoadSuccess={({ numPages }) => setNumPages(numPages)}
+                        onLoadSuccess={({ numPages }) => {
+                            setNumPages(numPages);
+                            updateTotalPages(numPages); // Salva o total de páginas no JSON de anotações
+                        }}
                         loading={<div className="text-white mt-20 font-medium">A carregar biblioteca...</div>}
                     >
                         <div className={`flex gap-4 ${isDoublePage ? 'max-w-none' : 'max-w-4xl'}`}>

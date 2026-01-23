@@ -7,6 +7,10 @@ import DocumentList from './components/DocumentList';
 import PDFReader from './components/PDFReader';
 import Login from './components/Login';
 import Register from './components/Register';
+import CriarPedido from './components/CriarPedido';
+import MeusPedidos from './components/MeusPedidos';
+import AdminPedidos from './components/AdminPedidos';
+import EditBook from './components/EditBook';
 
 // --- COMPONENTE DE PROTEÇÃO (GUARDA) REFORMULADO ---
 const PrivateRoute = ({ children }) => {
@@ -54,6 +58,53 @@ const PrivateRoute = ({ children }) => {
     return children;
 };
 
+// --- COMPONENTE DE PROTEÇÃO PARA ADMINISTRADORES ---
+const AdminRoute = ({ children }) => {
+    const [isAuthenticated, setIsAuthenticated] = useState(null);
+    const [isAdmin, setIsAdmin] = useState(false);
+    const token = localStorage.getItem('token');
+
+    useEffect(() => {
+        const verifyAuth = async () => {
+            if (!token) {
+                setIsAuthenticated(false);
+                return;
+            }
+
+            try {
+                const response = await api.get('/auth/verify');
+                setIsAuthenticated(true);
+                setIsAdmin(response.data.user.is_admin);
+            } catch (error) {
+                console.error("Token inválido ou expirado");
+                localStorage.clear();
+                setIsAuthenticated(false);
+            }
+        };
+
+        verifyAuth();
+    }, [token]);
+
+    if (isAuthenticated === null) {
+        return (
+            <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+            </div>
+        );
+    }
+
+    if (!isAuthenticated) {
+        return <Navigate to="/login" replace />;
+    }
+
+    // Se não for admin, redireciona para home
+    if (!isAdmin) {
+        return <Navigate to="/" replace />;
+    }
+
+    return children;
+};
+
 function App() {
     return (
         <Router>
@@ -78,6 +129,43 @@ function App() {
                         <PrivateRoute>
                             <PDFReader />
                         </PrivateRoute>
+                    }
+                />
+
+                {/* Rotas do Sistema de Pedidos */}
+                <Route
+                    path="/criar-pedido"
+                    element={
+                        <PrivateRoute>
+                            <CriarPedido />
+                        </PrivateRoute>
+                    }
+                />
+
+                <Route
+                    path="/meus-pedidos"
+                    element={
+                        <PrivateRoute>
+                            <MeusPedidos />
+                        </PrivateRoute>
+                    }
+                />
+
+                <Route
+                    path="/admin/pedidos"
+                    element={
+                        <AdminRoute>
+                            <AdminPedidos />
+                        </AdminRoute>
+                    }
+                />
+
+                <Route
+                    path="/edit-book/:id"
+                    element={
+                        <AdminRoute>
+                            <EditBook />
+                        </AdminRoute>
                     }
                 />
 

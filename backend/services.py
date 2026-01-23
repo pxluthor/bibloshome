@@ -44,6 +44,17 @@ class PDFService:
             print(f"Error reading PDF: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to process PDF: {str(e)}")
 
+    def count_pages(self, file_path: str) -> int:
+        """
+        Returns the total number of pages in the PDF.
+        """
+        try:
+            with pdfplumber.open(file_path) as pdf:
+                return len(pdf.pages)
+        except Exception as e:
+            print(f"Error counting PDF pages: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to count PDF pages: {str(e)}")
+
 class TranslationService:
     def __init__(self):
         self.translator = GoogleTranslator(source='auto', target='pt')
