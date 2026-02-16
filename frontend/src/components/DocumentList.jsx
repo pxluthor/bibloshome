@@ -107,7 +107,7 @@ const DocumentList = () => {
         setActionLoading(docId);
         try {
             await api.post(`/my-list/add/${docId}`);
-            setMyListIds(prev => new Set([...prev, docId]));
+            await fetchData(); // Recarrega os dados da lista para obter total_pages
         } catch (error) {
             console.error("Erro ao adicionar:", error);
             alert("Erro ao adicionar livro.");
