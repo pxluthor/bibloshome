@@ -5,6 +5,7 @@ mysql-connector-python
 python-multipart
 python-dotenv
 pdfplumber
+PyMuPDF
 deep-translator
 passlib[bcrypt]
 bcrypt==4.0.1
