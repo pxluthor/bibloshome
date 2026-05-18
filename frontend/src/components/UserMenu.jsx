@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, LogOut, ChevronDown, Bookmark, ShoppingBag, Settings, BookOpen, FileText } from 'lucide-react';
+import { User, LogOut, ChevronDown, Bookmark, ShoppingBag, Settings, BookOpen, FileText, Database } from 'lucide-react';
 
 const UserMenu = ({ userName, isAdmin, pedidosPendentes = 0, adminPendentes = 0 }) => {
     const [isOpen, setIsOpen] = useState(false);
@@ -102,6 +102,19 @@ const UserMenu = ({ userName, isAdmin, pedidosPendentes = 0, adminPendentes = 0 
                                     )}
                                 </div>
                                 Gerenciar Pedidos
+                            </button>
+                        )}
+
+                        {isAdmin && (
+                            <button
+                                onClick={() => {
+                                    navigate('/admin/bd');
+                                    setIsOpen(false);
+                                }}
+                                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-purple-600 hover:bg-purple-50 transition"
+                            >
+                                <Database size={18} />
+                                AdminBd
                             </button>
                         )}
 

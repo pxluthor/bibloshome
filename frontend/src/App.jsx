@@ -12,6 +12,7 @@ import MeusPedidos from './components/MeusPedidos';
 import AdminPedidos from './components/AdminPedidos';
 import EditBook from './components/EditBook';
 import Collections from './components/Collections';
+import AdminBd from './components/AdminBd';
 
 // --- COMPONENTE DE PROTEÇÃO (GUARDA) REFORMULADO ---
 const PrivateRoute = ({ children }) => {
@@ -108,7 +109,7 @@ const AdminRoute = ({ children }) => {
 
 function App() {
     return (
-        <Router>
+        <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <Routes>
                 {/* Rotas Públicas */}
                 <Route path="/login" element={<Login />} />
@@ -176,6 +177,15 @@ function App() {
                         <PrivateRoute>
                             <Collections />
                         </PrivateRoute>
+                    }
+                />
+
+                <Route
+                    path="/admin/bd"
+                    element={
+                        <AdminRoute>
+                            <AdminBd />
+                        </AdminRoute>
                     }
                 />
 

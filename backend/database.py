@@ -15,7 +15,7 @@ if not DATABASE_URL:
 # Configuração robusta do pool de conexões
 engine = create_engine(
     DATABASE_URL,
-    echo=True,
+    echo=False,
     pool_size=20,              # Número de conexões principais no pool
     max_overflow=20,           # Número máximo de conexões extras permitidas
     pool_recycle=3600,         # Recicla conexões a cada 1 hora (evita conexões estagnadas)

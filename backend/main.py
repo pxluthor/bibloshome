@@ -1,16 +1,18 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routes import router
+from admin_bd_routes import router as admin_bd_router
 from database import create_db_and_tables
 
 app = FastAPI(title="PDF Translator API")
 
 #CORS Configuration
 origins = [
-    "http://localhost:5173",  # Vite default port
+    "http://localhost:5171",
     "http://localhost:3000",
     "https://library.pxluthor.com.br",
-    "http://192.168.0.106:5173",
+    "https://api-library.pxluthor.com.br",
+    "http://192.168.0.106:5171",
 ]
 
 
@@ -30,6 +32,7 @@ def on_startup():
     create_db_and_tables()
 
 app.include_router(router)
+app.include_router(admin_bd_router)
 
 @app.get("/")
 def read_root():
