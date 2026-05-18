@@ -1,18 +1,41 @@
-from fastapi import APIRouter, Depends, HTTPException, Body, Response
+from fastapi import APIRouter, Depends, HTTPException, Body, Response, Query
 from fastapi.responses import FileResponse
-from sqlmodel import Session, select
-from typing import List
+from sqlmodel import Session, select, func
+from sqlalchemy import or_
+from typing import List, Optional
 from datetime import datetime
 from database import get_session
-from models import Usuario, UsuarioCreate, UsuarioLogin, ListaLeitura, ListaLeituraUpdate, Livro, Anotacao, AnotacaoUpdate, LivroRead, LivroUpdate, PedidoLivro, PedidoLivroCreate, PedidoLivroUpdate
+from models import Usuario, UsuarioCreate, UsuarioLogin, ListaLeitura, ListaLeituraUpdate, ColecaoLivro, ColecaoLivroItem, ColecaoLivroCreate, Livro, Anotacao, AnotacaoUpdate, LivroRead, LivroUpdate, PedidoLivro, PedidoLivroCreate, PedidoLivroUpdate
 from services import get_pdf_service, get_translation_service, PDFService, TranslationService
 from auth import get_password_hash, verify_password, create_access_token, get_current_user
 
 router = APIRouter()
 
-@router.get("/documents", response_model=List[LivroRead])
-def list_documents(session: Session = Depends(get_session)):
-    return session.exec(select(Livro)).all()
+@router.get("/documents/genres")
+def list_genres(session: Session = Depends(get_session)):
+    rows = session.exec(select(Livro.genero).where(Livro.genero != None).distinct()).all()
+    return sorted([r for r in rows if r])
+
+@router.get("/documents")
+def list_documents(
+    page: int = Query(1, ge=1),
+    limit: int = Query(8, ge=1, le=100),
+    search: str = Query(""),
+    genre: str = Query(""),
+    session: Session = Depends(get_session)
+):
+    query = select(Livro)
+    if search:
+        query = query.where(
+            or_(Livro.titulo.ilike(f"%{search}%"), Livro.autor.ilike(f"%{search}%"))
+        )
+    if genre:
+        query = query.where(Livro.genero == genre)
+
+    total = session.exec(select(func.count()).select_from(query.subquery())).one()
+    items = session.exec(query.offset((page - 1) * limit).limit(limit)).all()
+
+    return {"items": [LivroRead.model_validate(i) for i in items], "total": total, "page": page, "limit": limit}
 
 @router.get("/documents/{doc_id}/file")
 def get_document_file(
@@ -252,6 +275,164 @@ def remove_from_list(
     session.commit()
     
     return {"message": "Livro removido da lista", "status": "success"}
+
+@router.get("/collections")
+def get_collections(current_user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)):
+    collections = session.exec(
+        select(ColecaoLivro).where(ColecaoLivro.usuario_id == current_user.id)
+    ).all()
+
+    response = []
+    for collection in collections:
+        items = session.exec(
+            select(ColecaoLivroItem).where(ColecaoLivroItem.colecao_id == collection.id)
+        ).all()
+        book_ids = [item.livro_id for item in items]
+        books = []
+        for bid in book_ids:
+            livro = session.get(Livro, bid)
+            if livro:
+                books.append({"id": livro.id, "titulo": livro.titulo, "autor": livro.autor})
+        response.append({
+            "id": collection.id,
+            "nome": collection.nome,
+            "data_criacao": collection.data_criacao,
+            "book_ids": book_ids,
+            "books": books,
+            "total_livros": len(book_ids)
+        })
+    return response
+
+@router.post("/collections", status_code=201)
+def create_collection(
+    collection_data: ColecaoLivroCreate,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    nome = collection_data.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome da colecao e obrigatorio")
+
+    existing = session.exec(
+        select(ColecaoLivro).where(
+            ColecaoLivro.usuario_id == current_user.id,
+            ColecaoLivro.nome == nome
+        )
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Ja existe uma colecao com este nome")
+
+    collection = ColecaoLivro(usuario_id=current_user.id, nome=nome)
+    session.add(collection)
+    session.commit()
+    session.refresh(collection)
+
+    return {
+        "id": collection.id,
+        "nome": collection.nome,
+        "data_criacao": collection.data_criacao,
+        "book_ids": [],
+        "total_livros": 0
+    }
+
+@router.post("/collections/{collection_id}/books/{livro_id}")
+def add_book_to_collection(
+    collection_id: int,
+    livro_id: int,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    collection = session.get(ColecaoLivro, collection_id)
+    if not collection or collection.usuario_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Colecao nao encontrada")
+
+    livro = session.get(Livro, livro_id)
+    if not livro:
+        raise HTTPException(status_code=404, detail="Livro nao encontrado")
+
+    existing = session.exec(
+        select(ColecaoLivroItem).where(
+            ColecaoLivroItem.colecao_id == collection_id,
+            ColecaoLivroItem.livro_id == livro_id
+        )
+    ).first()
+    if existing:
+        return {"message": "Livro ja esta nesta colecao", "status": "exists"}
+
+    item = ColecaoLivroItem(colecao_id=collection_id, livro_id=livro_id)
+    session.add(item)
+    session.commit()
+    return {"message": "Livro adicionado a colecao", "status": "success"}
+
+@router.put("/collections/{collection_id}")
+def rename_collection(
+    collection_id: int,
+    collection_data: ColecaoLivroCreate,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    collection = session.get(ColecaoLivro, collection_id)
+    if not collection or collection.usuario_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Colecao nao encontrada")
+
+    nome = collection_data.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome e obrigatorio")
+
+    collection.nome = nome
+    session.add(collection)
+    session.commit()
+    session.refresh(collection)
+
+    items = session.exec(select(ColecaoLivroItem).where(ColecaoLivroItem.colecao_id == collection.id)).all()
+    return {
+        "id": collection.id,
+        "nome": collection.nome,
+        "data_criacao": collection.data_criacao,
+        "book_ids": [item.livro_id for item in items],
+        "total_livros": len(items)
+    }
+
+@router.delete("/collections/{collection_id}")
+def delete_collection(
+    collection_id: int,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    collection = session.get(ColecaoLivro, collection_id)
+    if not collection or collection.usuario_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Colecao nao encontrada")
+
+    items = session.exec(select(ColecaoLivroItem).where(ColecaoLivroItem.colecao_id == collection_id)).all()
+    for item in items:
+        session.delete(item)
+    session.delete(collection)
+    session.commit()
+    return {"message": "Colecao deletada", "status": "success"}
+
+@router.delete("/collections/{collection_id}/books/{livro_id}")
+def remove_book_from_collection(
+    collection_id: int,
+    livro_id: int,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    collection = session.get(ColecaoLivro, collection_id)
+    if not collection or collection.usuario_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Colecao nao encontrada")
+
+    item = session.exec(
+        select(ColecaoLivroItem).where(
+            ColecaoLivroItem.colecao_id == collection_id,
+            ColecaoLivroItem.livro_id == livro_id
+        )
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Livro nao encontrado nesta colecao")
+
+    session.delete(item)
+    session.commit()
+    return {"message": "Livro removido da colecao", "status": "success"}
 
 @router.get("/documents/{doc_id}/cover")
 def get_cover(doc_id: int, session: Session = Depends(get_session)):

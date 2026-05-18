@@ -11,6 +11,7 @@ import CriarPedido from './components/CriarPedido';
 import MeusPedidos from './components/MeusPedidos';
 import AdminPedidos from './components/AdminPedidos';
 import EditBook from './components/EditBook';
+import Collections from './components/Collections';
 
 // --- COMPONENTE DE PROTEÇÃO (GUARDA) REFORMULADO ---
 const PrivateRoute = ({ children }) => {
@@ -166,6 +167,15 @@ function App() {
                         <AdminRoute>
                             <EditBook />
                         </AdminRoute>
+                    }
+                />
+
+                <Route
+                    path="/colecoes"
+                    element={
+                        <PrivateRoute>
+                            <Collections />
+                        </PrivateRoute>
                     }
                 />
 

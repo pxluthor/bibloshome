@@ -1,9 +1,9 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
     Search, BookOpen, Plus, Library, 
     Calendar, User, Tag, ChevronLeft, ChevronRight, 
-    Bookmark, Trash2, Filter, X, LayoutGrid, List, Edit 
+    Bookmark, Trash2, Filter, X, LayoutGrid, List, Edit, FolderPlus, Check
 } from 'lucide-react';
 import api from '../services/api';
 import BookCardSkeleton from './BookCardSkeleton';
@@ -13,20 +13,29 @@ const DocumentList = () => {
     // --- ESTADOS DE DADOS ---
     const [documents, setDocuments] = useState([]);
     const [myListIds, setMyListIds] = useState(new Set());
-    const [myListData, setMyListData] = useState({}); // Armazena status e progresso
+    const [myListData, setMyListData] = useState({});
+    const [myListBooks, setMyListBooks] = useState([]);
+    const [collections, setCollections] = useState([]);
+    const [availableGenres, setAvailableGenres] = useState([]);
+    const [totalItems, setTotalItems] = useState(0);
 
     // --- ESTADOS DE CONTROLE ---
     const [viewMode, setViewMode] = useState('all');
-    const [viewLayout, setViewLayout] = useState('grid'); // 'grid' ou 'list'
+    const [viewLayout, setViewLayout] = useState('grid');
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedGenre, setSelectedGenre] = useState(null);
     const [currentPage, setCurrentPage] = useState(1);
     const [isAnimating, setIsAnimating] = useState(false);
-    const itemsPerPage = 8; // Ajustado para melhor visualização em grid
+    const itemsPerPage = 8;
 
     // --- ESTADOS DE CARREGAMENTO ---
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(null);
+    const [collectionMenuDocId, setCollectionMenuDocId] = useState(null);
+    const [collectionName, setCollectionName] = useState("");
+    const [collectionLoading, setCollectionLoading] = useState(null);
+
+    const searchDebounceRef = useRef(null);
 
     const navigate = useNavigate();
     const userName = localStorage.getItem('userName') || 'Estudante';
@@ -36,51 +45,93 @@ const DocumentList = () => {
     const [adminPendentes, setAdminPendentes] = useState(0);
 
     useEffect(() => {
-        fetchData();
+        fetchInitialData();
         fetchPedidosPendentes();
     }, []);
 
-    // Resetar página ao buscar, mudar de aba ou mudar gênero
+    // Paginação server-side: re-fetch ao mudar página, gênero ou viewMode
+    useEffect(() => {
+        if (viewMode === 'all') fetchDocuments(currentPage, searchTerm, selectedGenre);
+    }, [currentPage, selectedGenre, viewMode]);
+
+    // Debounce de busca: só dispara 400ms após parar de digitar
+    useEffect(() => {
+        if (viewMode !== 'all') return;
+        clearTimeout(searchDebounceRef.current);
+        searchDebounceRef.current = setTimeout(() => {
+            setCurrentPage(1);
+            fetchDocuments(1, searchTerm, selectedGenre);
+        }, 400);
+        return () => clearTimeout(searchDebounceRef.current);
+    }, [searchTerm]);
+
+    // Resetar página ao trocar aba ou gênero
     useEffect(() => {
         setCurrentPage(1);
-    }, [searchTerm, viewMode, selectedGenre]);
+    }, [viewMode, selectedGenre]);
 
-    const fetchData = async () => {
+    const fetchInitialData = async () => {
         try {
             setLoading(true);
-            const [docsResponse, myListResponse] = await Promise.all([
-                api.get('/documents'),
-                api.get('/my-list').catch(() => ({ data: [] }))
+            const [docsResponse, myListResponse, collectionsResponse, genresResponse] = await Promise.all([
+                api.get('/documents', { params: { page: 1, limit: itemsPerPage } }),
+                api.get('/my-list').catch(() => ({ data: [] })),
+                api.get('/collections').catch(() => ({ data: [] })),
+                api.get('/documents/genres').catch(() => ({ data: [] }))
             ]);
 
-            // Garantimos que os dados são um array antes de salvar
-            const docs = Array.isArray(docsResponse.data) ? docsResponse.data : [];
-            setDocuments(docs);
+            const docsData = docsResponse.data;
+            setDocuments(Array.isArray(docsData.items) ? docsData.items : []);
+            setTotalItems(docsData.total ?? 0);
 
-            // Extração correta dos IDs da lista do usuário
             const ids = new Set();
             const listData = {};
+            const listBooks = [];
 
             if (Array.isArray(myListResponse.data)) {
                 myListResponse.data.forEach(item => {
                     if (item.livro?.id) {
                         ids.add(item.livro.id);
-                        listData[item.livro.id] = { 
-                            status: item.status, 
+                        listData[item.livro.id] = {
+                            status: item.status,
                             current_page: item.current_page || 1,
-                            total_pages: item.total_pages // Usa o total_pages vindo do JSON ou do banco
+                            total_pages: item.total_pages
                         };
+                        listBooks.push(item.livro);
                     }
                 });
             }
-            
+
             setMyListIds(ids);
             setMyListData(listData);
+            setMyListBooks(listBooks);
+            setCollections(Array.isArray(collectionsResponse.data) ? collectionsResponse.data : []);
+            setAvailableGenres(Array.isArray(genresResponse.data) ? genresResponse.data : []);
         } catch (error) {
-            console.error("Erro ao buscar documentos:", error);
+            console.error("Erro ao buscar dados iniciais:", error);
         } finally {
             setLoading(false);
         }
+    };
+
+    const fetchDocuments = async (page, search, genre) => {
+        try {
+            setLoading(true);
+            const params = { page, limit: itemsPerPage };
+            if (search) params.search = search;
+            if (genre) params.genre = genre;
+            const response = await api.get('/documents', { params });
+            setDocuments(Array.isArray(response.data.items) ? response.data.items : []);
+            setTotalItems(response.data.total ?? 0);
+        } catch (error) {
+            console.error("Erro ao buscar livros:", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchData = async () => {
+        await fetchInitialData();
     };
 
     const fetchPedidosPendentes = async () => {
@@ -140,25 +191,131 @@ const DocumentList = () => {
         navigate(`/document/${docId}`);
     };
 
-    // --- EXTRAI GÊNEROS ÚNICOS DOS DOCUMENTOS ---
-    // Nota: Quando tiver API de gêneros, substitua por: const availableGenres = await api.get('/genres');
-    const availableGenres = useMemo(() => {
-        const genres = new Set(documents.map(doc => doc.genero).filter(Boolean));
-        return Array.from(genres).sort();
-    }, [documents]);
+    const iconTooltipClass = "group/btn relative overflow-visible";
+    const renderTooltip = (label) => (
+        <span
+            aria-hidden="true"
+            className="invisible pointer-events-none absolute bottom-full left-1/2 z-40 mb-2 -translate-x-1/2 translate-y-1 scale-95 whitespace-nowrap rounded-md bg-gray-950 px-2.5 py-1.5 text-xs font-medium text-white opacity-0 shadow-lg transition-all duration-150 group-hover/btn:visible group-hover/btn:translate-y-0 group-hover/btn:scale-100 group-hover/btn:opacity-100 group-focus-visible/btn:visible group-focus-visible/btn:translate-y-0 group-focus-visible/btn:scale-100 group-focus-visible/btn:opacity-100"
+        >
+            {label}
+            <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1 rotate-45 bg-gray-950" />
+        </span>
+    );
 
-    // --- LÓGICA DE FILTRAGEM E PAGINAÇÃO ---
-    const filteredData = useMemo(() => {
-        let data = viewMode === 'my_list'
-            ? documents.filter(doc => myListIds.has(doc.id))
-            : documents;
+    const refreshCollections = async () => {
+        const response = await api.get('/collections').catch(() => ({ data: [] }));
+        setCollections(Array.isArray(response.data) ? response.data : []);
+    };
 
-        // Filtrar por gênero (NOVO)
-        if (selectedGenre) {
-            data = data.filter(doc => doc.genero === selectedGenre);
+    const handleAddToCollection = async (e, collectionId, docId) => {
+        e.stopPropagation();
+        setCollectionLoading(`${collectionId}-${docId}`);
+        try {
+            await api.post(`/collections/${collectionId}/books/${docId}`);
+            await refreshCollections();
+        } catch (error) {
+            console.error("Erro ao adicionar a colecao:", error);
+            alert(error.response?.data?.detail || "Erro ao adicionar livro a colecao.");
+        } finally {
+            setCollectionLoading(null);
         }
+    };
 
-        // Filtrar por busca de texto
+    const handleCreateCollection = async (e, docId) => {
+        e.stopPropagation();
+        const name = collectionName.trim();
+        if (!name) return;
+
+        setCollectionLoading(`new-${docId}`);
+        try {
+            const response = await api.post('/collections', { nome: name });
+            await api.post(`/collections/${response.data.id}/books/${docId}`);
+            setCollectionName("");
+            await refreshCollections();
+        } catch (error) {
+            console.error("Erro ao criar colecao:", error);
+            alert(error.response?.data?.detail || "Erro ao criar colecao.");
+        } finally {
+            setCollectionLoading(null);
+        }
+    };
+
+    const renderCollectionMenu = (docId, compact = false) => {
+        const isOpen = collectionMenuDocId === docId;
+
+        return (
+            <div className="relative">
+                <button
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        setCollectionMenuDocId(isOpen ? null : docId);
+                    }}
+                    className={`${iconTooltipClass} ${compact ? 'h-9 w-9' : 'h-10 w-10'} bg-violet-50 text-violet-700 rounded-lg hover:bg-violet-100 border border-violet-200 transition flex items-center justify-center shadow-sm flex-shrink-0`}
+                    aria-label="Adicionar a colecao"
+                >
+                    <FolderPlus size={compact ? 14 : 18} />
+                    {renderTooltip("Adicionar a colecao")}
+                </button>
+
+                {isOpen && (
+                    <div
+                        className={`absolute right-0 bottom-full mb-2 w-72 bg-white border border-gray-200 rounded-lg shadow-xl z-30 p-3 text-left`}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="text-sm font-semibold text-gray-900 mb-2">Adicionar a colecao</div>
+
+                        <div className="max-h-44 overflow-y-auto space-y-1 mb-3">
+                            {collections.length === 0 ? (
+                                <p className="text-xs text-gray-500 py-2">Nenhuma colecao criada.</p>
+                            ) : (
+                                collections.map((collection) => {
+                                    const alreadyAdded = collection.book_ids?.includes(docId);
+                                    return (
+                                        <button
+                                            key={collection.id}
+                                            onClick={(e) => handleAddToCollection(e, collection.id, docId)}
+                                            disabled={alreadyAdded || collectionLoading === `${collection.id}-${docId}`}
+                                            className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-md text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-default"
+                                        >
+                                            <span className="truncate">{collection.nome}</span>
+                                            {alreadyAdded ? <Check size={16} className="text-green-600" /> : <Plus size={14} className="text-violet-600" />}
+                                        </button>
+                                    );
+                                })
+                            )}
+                        </div>
+
+                        <div className="border-t border-gray-100 pt-3">
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Nova colecao</label>
+                            <div className="flex gap-2">
+                                <input
+                                    value={collectionName}
+                                    onChange={(e) => setCollectionName(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleCreateCollection(e, docId);
+                                    }}
+                                    className="min-w-0 flex-1 border border-gray-200 rounded-md px-2 py-1.5 text-sm text-gray-900 focus:ring-2 focus:ring-violet-500 outline-none"
+                                    placeholder="Nome"
+                                />
+                                <button
+                                    onClick={(e) => handleCreateCollection(e, docId)}
+                                    disabled={!collectionName.trim() || collectionLoading === `new-${docId}`}
+                                    className="px-3 py-1.5 bg-violet-600 text-white rounded-md text-sm font-medium hover:bg-violet-700 disabled:bg-violet-300"
+                                >
+                                    Criar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    // --- PAGINAÇÃO: "Meus Livros" é client-side; "Acervo Completo" é server-side ---
+    const myListFiltered = useMemo(() => {
+        let data = myListBooks;
+        if (selectedGenre) data = data.filter(doc => doc.genero === selectedGenre);
         if (searchTerm.trim()) {
             const lowerTerm = searchTerm.toLowerCase();
             data = data.filter(doc =>
@@ -167,15 +324,18 @@ const DocumentList = () => {
             );
         }
         return data;
-    }, [documents, myListIds, viewMode, searchTerm, selectedGenre]);
+    }, [myListBooks, selectedGenre, searchTerm]);
 
-    const totalItems = filteredData.length;
-    const totalPages = Math.ceil(totalItems / itemsPerPage);
-    
-    const currentItems = useMemo(() => {
-        const startIndex = (currentPage - 1) * itemsPerPage;
-        return filteredData.slice(startIndex, startIndex + itemsPerPage);
-    }, [filteredData, currentPage]);
+    const myListTotal = myListFiltered.length;
+    const myListTotalPages = Math.ceil(myListTotal / itemsPerPage);
+    const myListCurrentItems = useMemo(() => {
+        const start = (currentPage - 1) * itemsPerPage;
+        return myListFiltered.slice(start, start + itemsPerPage);
+    }, [myListFiltered, currentPage]);
+
+    const currentItems = viewMode === 'my_list' ? myListCurrentItems : documents;
+    const totalPages = viewMode === 'my_list' ? myListTotalPages : Math.ceil(totalItems / itemsPerPage);
+    const displayTotal = viewMode === 'my_list' ? myListTotal : totalItems;
 
     const getGradient = (id) => {
         const gradients = [
@@ -214,11 +374,23 @@ const DocumentList = () => {
                                 onClick={() => setViewMode('my_list')}
                                 className={`px-6 py-2 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${viewMode === 'my_list' ? 'bg-blue-100 text-blue-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}
                             >
-                                <Bookmark size={16} /> 
+                                <Bookmark size={16} />
                                 Meus Livros
                                 {myListIds.size > 0 && (
                                     <span className="ml-2 bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full font-semibold">
                                         {myListIds.size}
+                                    </span>
+                                )}
+                            </button>
+                            <button
+                                onClick={() => navigate('/colecoes')}
+                                className="px-6 py-2 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 text-gray-500 hover:bg-gray-50"
+                            >
+                                <FolderPlus size={16} />
+                                Coleções
+                                {collections.length > 0 && (
+                                    <span className="ml-2 bg-violet-600 text-white text-xs px-2 py-0.5 rounded-full font-semibold">
+                                        {collections.length}
                                     </span>
                                 )}
                             </button>
@@ -311,7 +483,7 @@ const DocumentList = () => {
                 ) : (
                     <>
                         <div className="mb-4 text-sm text-gray-500">
-                            Mostrando {currentItems.length} de {totalItems} livros encontrados
+                            Mostrando {currentItems.length} de {displayTotal} livros encontrados
                         </div>
 
                         {currentItems.length > 0 ? (
@@ -328,12 +500,12 @@ const DocumentList = () => {
                                             return (
                                                 <div 
                                                     key={doc.id} 
-                                                    className={`bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all overflow-hidden border border-gray-100 flex flex-col h-full group animate-fade-in-up`}
+                                                    className={`bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all border border-gray-100 flex flex-col h-full group animate-fade-in-up`}
                                                     style={delayStyle}
                                                 >
-                                                    
+
                                                     {/* CONTAINER DA CAPA */}
-                                                    <div className="h-36 sm:h-40 md:h-44 lg:h-48 relative overflow-hidden bg-gray-200 flex items-center justify-center shadow-inner">
+                                                    <div className="h-36 sm:h-40 md:h-44 lg:h-48 relative overflow-hidden rounded-t-2xl bg-gray-200 flex items-center justify-center shadow-inner">
                                                         <img 
                                                             src={coverUrl} 
                                                             alt={doc.titulo}
@@ -404,42 +576,51 @@ const DocumentList = () => {
                                                             {isAdmin && (
                                                                 <button 
                                                                     onClick={() => navigate(`/edit-book/${doc.id}`)}
-                                                                    className="px-3 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 border border-gray-300 transition flex items-center justify-center shadow-sm"
-                                                                    title="Editar livro"
+                                                                    className={`${iconTooltipClass} h-10 w-10 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 border border-gray-300 transition flex items-center justify-center shadow-sm flex-shrink-0`}
+                                                                    aria-label="Editar livro"
                                                                 >
                                                                     <Edit size={18} />
+                                                                    {renderTooltip("Editar livro")}
                                                                 </button>
                                                             )}
+
+                                                            {renderCollectionMenu(doc.id)}
                                                             
                                                             {isInMyList ? (
                                                                 <>
                                                                     <button 
                                                                         onClick={() => handleRead(doc.id)} 
-                                                                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-green-50 text-green-700 rounded-lg font-semibold hover:bg-green-100 border border-green-200 transition shadow-sm"
+                                                                        className={`${iconTooltipClass} h-10 w-10 flex items-center justify-center bg-green-50 text-green-700 rounded-lg font-semibold hover:bg-green-100 border border-green-200 transition shadow-sm flex-shrink-0`}
+                                                                        aria-label={myListItem.current_page > 1 ? 'Continuar leitura' : 'Ler'}
                                                                     >
-                                                                        <BookOpen size={18} /> {myListItem.current_page > 1 ? 'Continuar' : 'Ler'}
+                                                                        <BookOpen size={18} />
+                                                                        {renderTooltip(myListItem.current_page > 1 ? "Continuar leitura" : "Ler")}
                                                                     </button>
                                                                     <button 
                                                                         onClick={(e) => handleRemoveFromList(e, doc.id)}
                                                                         disabled={actionLoading === doc.id}
-                                                                        className="px-3 py-2.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 border border-red-200 transition flex items-center justify-center shadow-sm disabled:opacity-50"
+                                                                        className={`${iconTooltipClass} h-10 w-10 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 border border-red-200 transition flex items-center justify-center shadow-sm disabled:opacity-50 flex-shrink-0`}
+                                                                        aria-label="Remover da lista"
                                                                     >
                                                                         {actionLoading === doc.id ? 
                                                                             <div className="animate-spin h-4 w-4 border-b-2 border-red-600 rounded-full"></div> 
                                                                             : <Trash2 size={18} />
                                                                         }
+                                                                        {renderTooltip("Remover da lista")}
                                                                     </button>
                                                                 </>
                                                             ) : (
                                                                 <button 
                                                                     onClick={(e) => handleAddToList(e, doc.id)}
                                                                     disabled={actionLoading === doc.id}
-                                                                    className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition shadow-md disabled:bg-blue-400"
+                                                                    className={`${iconTooltipClass} h-10 w-10 flex items-center justify-center bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition shadow-md disabled:bg-blue-400 flex-shrink-0`}
+                                                                    aria-label="Adicionar aos meus livros"
                                                                 >
                                                                     {actionLoading === doc.id ? 
                                                                         <div className="animate-spin h-5 w-5 border-b-2 border-white rounded-full"></div> 
-                                                                        : <><Plus size={18} /> Adicionar</>
+                                                                        : <Plus size={18} />
                                                                     }
+                                                                    {renderTooltip("Adicionar aos meus livros")}
                                                                 </button>
                                                             )}
                                                         </div>
@@ -460,7 +641,7 @@ const DocumentList = () => {
                                             return (
                                                 <div 
                                                     key={doc.id} 
-                                                    className="bg-white rounded-lg shadow-sm hover:shadow-md transition-all overflow-hidden border border-gray-100 flex items-center gap-4 group animate-fade-in-up"
+                                                    className="bg-white rounded-lg shadow-sm hover:shadow-md transition-all border border-gray-100 flex items-center gap-4 group animate-fade-in-up"
                                                     style={delayStyle}
                                                 >
                                                     {/* Capa mini */}
@@ -521,42 +702,51 @@ const DocumentList = () => {
                                                         {isAdmin && (
                                                             <button 
                                                                 onClick={() => navigate(`/edit-book/${doc.id}`)}
-                                                                className="p-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 border border-gray-300 transition"
-                                                                title="Editar livro"
+                                                                className={`${iconTooltipClass} h-9 w-9 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 border border-gray-300 transition flex items-center justify-center flex-shrink-0`}
+                                                                aria-label="Editar livro"
                                                             >
                                                                 <Edit size={14} />
+                                                                {renderTooltip("Editar livro")}
                                                             </button>
                                                         )}
+
+                                                        {renderCollectionMenu(doc.id, true)}
                                                         
                                                         {isInMyList ? (
                                                             <>
                                                                 <button 
                                                                     onClick={() => handleRead(doc.id)} 
-                                                                    className="px-3 py-1.5 bg-green-50 text-green-700 rounded-lg font-medium hover:bg-green-100 border border-green-200 transition text-sm"
+                                                                    className={`${iconTooltipClass} h-9 w-9 bg-green-50 text-green-700 rounded-lg font-medium hover:bg-green-100 border border-green-200 transition flex items-center justify-center flex-shrink-0`}
+                                                                    aria-label={myListItem.current_page > 1 ? 'Continuar leitura' : 'Ler'}
                                                                 >
-                                                                    {myListItem.current_page > 1 ? 'Continuar' : 'Ler'}
+                                                                    <BookOpen size={14} />
+                                                                    {renderTooltip(myListItem.current_page > 1 ? "Continuar leitura" : "Ler")}
                                                                 </button>
                                                                 <button 
                                                                     onClick={(e) => handleRemoveFromList(e, doc.id)}
                                                                     disabled={actionLoading === doc.id}
-                                                                    className="p-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 border border-red-200 transition disabled:opacity-50"
+                                                                    className={`${iconTooltipClass} h-9 w-9 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 border border-red-200 transition disabled:opacity-50 flex items-center justify-center flex-shrink-0`}
+                                                                    aria-label="Remover da lista"
                                                                 >
                                                                     {actionLoading === doc.id ? 
                                                                         <div className="animate-spin h-3 w-3 border-b-2 border-red-600 rounded-full"></div> 
                                                                         : <Trash2 size={14} />
                                                                     }
+                                                                    {renderTooltip("Remover da lista")}
                                                                 </button>
                                                             </>
                                                         ) : (
                                                             <button 
                                                                 onClick={(e) => handleAddToList(e, doc.id)}
                                                                 disabled={actionLoading === doc.id}
-                                                                className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition text-sm disabled:bg-blue-400"
+                                                                className={`${iconTooltipClass} h-9 w-9 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition disabled:bg-blue-400 flex items-center justify-center flex-shrink-0`}
+                                                                aria-label="Adicionar aos meus livros"
                                                             >
                                                                 {actionLoading === doc.id ? 
                                                                     <div className="animate-spin h-3 w-3 border-b-2 border-white rounded-full"></div> 
-                                                                    : 'Adicionar'
+                                                                    : <Plus size={14} />
                                                                 }
+                                                                {renderTooltip("Adicionar aos meus livros")}
                                                             </button>
                                                         )}
                                                     </div>
@@ -575,7 +765,7 @@ const DocumentList = () => {
                         )}
 
                         {/* PAGINAÇÃO */}
-                        {totalItems > itemsPerPage && (
+                        {displayTotal > itemsPerPage && (
                             <div className="mt-10 flex justify-center items-center gap-4">
                                 <button 
                                     onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} 
