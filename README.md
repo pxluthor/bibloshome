@@ -1,3 +1,9 @@
+# Init claudecode with ollama.
+ollama launch claude --model kimi-k2.5:cloud
+minimax-m2.5:cloud
+glm-5:cloud
+kimi-k2.5:cloud
+
 # 📚 BiblosHome
 
 ![BiblosHome](https://img.shields.io/badge/version-1.0.0-blue.svg)
@@ -170,7 +176,7 @@ cd frontend
 npm run dev
 ```
 
-O frontend estará disponível em `http://localhost:5173`
+O frontend estará disponível em `http://localhost:5171`
 
 ### Modo Produção
 
@@ -314,6 +320,93 @@ Se você encontrar algum problema ou tiver dúvidas:
 1. Verifique a [documentação da API](http://localhost:8001/docs)
 2. Consulte o [roadmap de melhorias](Melhorias/roadmap-melhorias.md)
 3. Abra uma [issue no GitHub](https://github.com/pxluthor/bibloshome/issues)
+
+## Docker
+
+Existem duas formas de rodar com Docker.
+
+### Opção 1: App com MySQL no Docker
+
+Este modo sobe os três serviços: MySQL, backend e frontend.
+
+```bash
+docker compose up -d --build
+```
+
+Serviços disponíveis:
+
+- Frontend: `http://localhost:5171`
+- Backend: `http://localhost:8001`
+- Swagger: `http://localhost:8001/docs`
+- MySQL: `localhost:3307`
+
+O MySQL usa a porta `3307` no host para evitar conflito com um MySQL local rodando em `3306`. Dentro da rede Docker, o backend acessa o banco por `db:3306`.
+
+Credenciais padrão do banco Docker:
+
+```text
+Banco: bibloshome
+Usuário: bibloshome
+Senha: bibloshome
+Root password: root
+```
+
+### Opção 2: App usando um MySQL local existente
+
+Use este modo quando quiser manter as referências de livros que já estão no seu banco local na porta `3306`.
+
+Configure as variáveis em um arquivo baseado em `.env.docker.local-db.example`:
+
+```env
+LOCAL_DB_USER=root
+LOCAL_DB_PASSWORD=sua_senha
+LOCAL_DB_PORT=3306
+LOCAL_DB_NAME=bibloshome
+```
+
+Depois suba somente backend e frontend:
+
+```bash
+docker compose -f docker-compose.local-db.yml --env-file .env.docker.local-db.example up -d --build
+```
+
+Neste modo o backend conecta no MySQL da máquina host usando `host.docker.internal:3306`.
+
+### Comandos úteis
+
+```bash
+docker compose ps
+docker compose logs -f backend
+docker compose down
+```
+
+No modo com banco local:
+
+```bash
+docker compose -f docker-compose.local-db.yml --env-file .env.docker.local-db.example down
+```
+
+### PDFs
+
+Os PDFs são montados no backend por volume:
+
+```text
+./data/pdfs:/data/pdfs
+```
+
+O backend usa `PDF_SOURCE_DIR=/data/pdfs`. Coloque os PDFs em `data/pdfs` ou mantenha no banco caminhos compatíveis com essa pasta.
+
+### Por que existe `frontend/nginx.conf`?
+
+O frontend React é buildado pelo Vite em arquivos estáticos. No Docker, esses arquivos precisam ser servidos por um servidor HTTP; por isso o container final usa Nginx.
+
+O arquivo `frontend/nginx.conf` configura o Nginx para servir o `dist` e fazer fallback de rotas SPA:
+
+```nginx
+try_files $uri $uri/ /index.html;
+```
+
+Sem esse fallback, acessar diretamente rotas como `/login`, `/register` ou uma rota interna do React poderia retornar 404 ao recarregar a página.
 
 ---
 

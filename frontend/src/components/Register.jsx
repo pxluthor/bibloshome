@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import axios from 'axios';
 import { useNavigate, Link } from 'react-router-dom';
 import { UserPlus, User, Lock, Mail } from 'lucide-react';
+import api from '../services/api';
 
 const Register = () => {
     const [formData, setFormData] = useState({ nome: '', email: '', senha: '', is_admin: false });
@@ -19,7 +19,7 @@ const Register = () => {
     const handleRegister = async (e) => {
         e.preventDefault();
         try {
-            await axios.post('https://api-library.pxluthor.com.br/auth/register', formData);
+            await api.post('/auth/register', formData);
             alert("Cadastro realizado com sucesso! Faça login.");
             navigate('/login');
         } catch (err) {

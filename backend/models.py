@@ -71,6 +71,25 @@ class ListaLeitura(SQLModel, table=True):
 class ListaLeituraUpdate(SQLModel):
     status: str
 
+class ColecaoLivro(SQLModel, table=True):
+    __tablename__ = "colecoes_livros"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id")
+    nome: str
+    data_criacao: datetime = Field(default_factory=datetime.utcnow)
+
+class ColecaoLivroItem(SQLModel, table=True):
+    __tablename__ = "colecoes_livros_itens"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    colecao_id: int = Field(foreign_key="colecoes_livros.id")
+    livro_id: int = Field(foreign_key="livros.id")
+    data_adicao: datetime = Field(default_factory=datetime.utcnow)
+
+class ColecaoLivroCreate(SQLModel):
+    nome: str
+
 # Modelos Pydantic para validação de entrada (Request Body)
 class UsuarioCreate(SQLModel):
     nome: str

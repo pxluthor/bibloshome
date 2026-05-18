@@ -1,0 +1,1 @@
+## make dev : iniciar o projeto pelo terminal

@@ -1,31 +1,56 @@
 import os
+from pathlib import PureWindowsPath
 import pdfplumber
 from deep_translator import GoogleTranslator
 from fastapi import HTTPException
 
 class PDFService:
-    def __init__(self, source_dir: str):
+    def __init__(self, source_dir: str, source_prefix: str = ""):
         self.source_dir = source_dir
+        self.source_prefix = source_prefix
+
+    def _candidate_paths(self, filename: str) -> list[str]:
+        candidates = []
+
+        if os.path.isabs(filename):
+            candidates.append(filename)
+
+        normalized = filename.replace("\\", "/")
+        prefix = self.source_prefix.replace("\\", "/").rstrip("/")
+
+        if prefix and normalized.lower().startswith(prefix.lower() + "/"):
+            relative = normalized[len(prefix):].lstrip("/")
+            candidates.append(os.path.join(self.source_dir, relative))
+
+        # Handles Windows absolute paths stored in the database, such as
+        # E:\BIBLIOTECA\AREA\book.pdf, when the matching host directory is
+        # mounted at PDF_SOURCE_DIR inside the container.
+        win_path = PureWindowsPath(filename)
+        if win_path.drive:
+            parts = list(win_path.parts)
+            if len(parts) > 2:
+                candidates.append(os.path.join(self.source_dir, *parts[2:]))
+
+        candidates.append(os.path.join(self.source_dir, normalized.lstrip("/")))
+
+        seen = set()
+        unique_candidates = []
+        for candidate in candidates:
+            if candidate not in seen:
+                seen.add(candidate)
+                unique_candidates.append(candidate)
+        return unique_candidates
 
     def get_file_path(self, filename: str) -> str:
         print(f"DEBUG: Resolving path for filename: {filename}")
-        # Check if the filename is actually an absolute path and exists
-        if os.path.isabs(filename) and os.path.exists(filename):
-            print(f"DEBUG: Found absolute path: {filename}")
-            return filename
-            
-        # Fallback to source_dir if it's just a filename or relative path
-        file_path = os.path.join(self.source_dir, filename)
-        print(f"DEBUG: Checking constructed path: {file_path}")
-        
-        if not os.path.exists(file_path):
-            print(f"DEBUG: File not found at: {file_path}")
-            # Try to handle cases where the DB path might be from a different OS or mount
-            # For now, we just raise 404
-            raise HTTPException(status_code=404, detail=f"PDF file not found: {filename}")
-        
-        print(f"DEBUG: File found at: {file_path}")
-        return file_path
+        for file_path in self._candidate_paths(filename):
+            print(f"DEBUG: Checking path: {file_path}")
+            if os.path.exists(file_path):
+                print(f"DEBUG: File found at: {file_path}")
+                return file_path
+
+        print(f"DEBUG: File not found for: {filename}")
+        raise HTTPException(status_code=404, detail=f"PDF file not found: {filename}")
 
     def extract_text(self, file_path: str, page_number: int) -> str:
         """
@@ -76,7 +101,7 @@ def get_pdf_service():
     source_dir = os.getenv("PDF_SOURCE_DIR")
     if not source_dir:
         raise HTTPException(status_code=500, detail="PDF_SOURCE_DIR not configured")
-    return PDFService(source_dir)
+    return PDFService(source_dir, os.getenv("PDF_SOURCE_PREFIX", ""))
 
 def get_translation_service():
     return TranslationService()
