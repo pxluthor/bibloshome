@@ -4,10 +4,10 @@ services:
     container_name: bibloshome-db
     restart: unless-stopped
     environment:
-      MYSQL_DATABASE: bibloshome
-      MYSQL_USER: bibloshome
-      MYSQL_PASSWORD: bibloshome
-      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: ${DB_NAME:-bibloshome}
+      MYSQL_USER: ${DB_USER:-bibloshome}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-bibloshome}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root}
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
@@ -16,7 +16,7 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$${DB_ROOT_PASSWORD:-root} --silent"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -27,15 +27,25 @@ services:
     container_name: bibloshome-backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: mysql+mysqlconnector://bibloshome:bibloshome@db:3306/bibloshome
-      PDF_SOURCE_DIR: /data/pdfs
-      SECRET_KEY: change-me-in-production
+      # SQLModel / FastAPI
+      DATABASE_URL: mysql+mysqlconnector://${DB_USER:-bibloshome}:${DB_PASSWORD:-bibloshome}@db:3306/${DB_NAME:-bibloshome}
+      SECRET_KEY: ${SECRET_KEY}
       ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: 1440
+      # mysql.connector (admin_bd_routes)
+      HOST: db
+      USER: ${DB_USER:-bibloshome}
+      PASSWORD: ${DB_PASSWORD:-bibloshome}
+      DATABASE: ${DB_NAME:-bibloshome}
+      # Biblioteca
+      PDF_SOURCE_DIR: /data/biblioteca
+      PASTA_BIBLIOTECA: /data/biblioteca
+      FOR_INSERT_DIR: /data/for_insert
     ports:
       - "8001:8001"
     volumes:
-      - ./data/pdfs:/data/pdfs
+      - ${BIBLIOTECA_HOST_DIR:-E:\BIBLIOTECA}:/data/biblioteca:rw
+      - ${FOR_INSERT_HOST_DIR:-E:\for_insert}:/data/for_insert:rw
     depends_on:
       db:
         condition: service_healthy
@@ -44,7 +54,7 @@ services:
     build:
       context: ./frontend
       args:
-        VITE_API_URL: http://localhost:8001
+        VITE_API_URL: ${VITE_API_URL:-https://api-library.pxluthor.com.br}
     container_name: bibloshome-frontend
     restart: unless-stopped
     ports:
