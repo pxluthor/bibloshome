@@ -15,6 +15,7 @@ from ai.providers import get_provider, ollama_provider
 from ai.rag import index_book, is_book_indexed, query_book
 from auth import get_current_user
 from database import engine, get_session
+from services import get_pdf_service, PDFService
 from models import (
     Livro,
     LivroIAStatus,
@@ -265,16 +266,19 @@ async def summarize_book(
     livro_id: int,
     current_user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
+    pdf_service: PDFService = Depends(get_pdf_service),
 ):
     livro = session.get(Livro, livro_id)
     if not livro or not livro.caminho:
         raise HTTPException(status_code=404, detail="Livro não encontrado")
 
-    if not os.path.exists(livro.caminho):
+    try:
+        file_path = pdf_service.get_file_path(livro.caminho)
+    except Exception:
         raise HTTPException(status_code=404, detail="Arquivo PDF não encontrado")
 
     try:
-        doc = fitz.open(livro.caminho)
+        doc = fitz.open(file_path)
         total = len(doc)
 
         if total > 50:
@@ -364,6 +368,7 @@ async def trigger_index(
     background_tasks: BackgroundTasks,
     current_user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
+    pdf_service: PDFService = Depends(get_pdf_service),
 ):
     if indexing_tasks.get(livro_id) == "indexing":
         return {"message": "Indexação já em andamento", "livro_id": livro_id}
@@ -372,10 +377,12 @@ async def trigger_index(
     if not livro or not livro.caminho:
         raise HTTPException(status_code=404, detail="Livro não encontrado")
 
-    if not os.path.exists(livro.caminho):
+    try:
+        file_path = pdf_service.get_file_path(livro.caminho)
+    except Exception:
         raise HTTPException(status_code=404, detail="Arquivo PDF não encontrado")
 
-    background_tasks.add_task(_run_index, livro_id, livro.caminho)
+    background_tasks.add_task(_run_index, livro_id, file_path)
     return {"message": "Indexação iniciada", "livro_id": livro_id}
 
 
