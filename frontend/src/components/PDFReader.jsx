@@ -4,7 +4,7 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import {
     ArrowLeft, ZoomIn, ZoomOut, Bookmark, Maximize, Minimize,
     X, Languages, FileText, ChevronLeft, ChevronRight,
-    Columns, Square, PanelRightClose, PanelRightOpen, Bot
+    Columns, Square, PanelRightClose, PanelRightOpen, Bot, Volume2
 } from 'lucide-react';
 
 import api from '../services/api';
@@ -54,6 +54,7 @@ const PDFReader = () => {
     const [readingStatus, setReadingStatus] = useState(null); // Estado para controlar se é 'lendo', 'concluido', etc.
     const [currentPageText, setCurrentPageText] = useState(''); // Texto da página atual para TTS
     const initializedRef = useRef(false);
+    const selectionAudioRef = useRef(null);
 
     // MEMOIZAÇÃO DO PDF - Evita recarregamento ao trocar abas ou redimensionar
     const pdfFile = useMemo(() => ({
@@ -251,6 +252,38 @@ const PDFReader = () => {
         handleTranslateFromSelection();
     };
 
+    const handleTTSFromSelection = async () => {
+        const text = window.getSelection()?.toString()?.trim();
+        if (!text) return;
+        setSelectionMenu(null);
+
+        // Para áudio anterior se houver
+        if (selectionAudioRef.current) {
+            selectionAudioRef.current.pause();
+            selectionAudioRef.current = null;
+        }
+
+        try {
+            const res = await fetch(`${api.defaults.baseURL}/ai/tts`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('token')}`,
+                },
+                body: JSON.stringify({ text, voice: 'Francisca', rate: 1.0 }),
+            });
+            if (!res.ok) return;
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            selectionAudioRef.current = audio;
+            audio.onended = () => URL.revokeObjectURL(url);
+            audio.play();
+        } catch (e) {
+            console.error('TTS seleção:', e);
+        }
+    };
+
     const handlePageSubmit = (e) => {
         e.preventDefault();
         const page = parseInt(inputPage);
@@ -314,16 +347,24 @@ const PDFReader = () => {
                     {HIGHLIGHT_COLORS.map(color => (
                         <button key={color.id} onClick={() => applyHighlight(color.hex, pageNumber)} className="w-8 h-8 md:w-8 md:h-8 rounded-full border border-gray-300 hover:scale-110 transition shadow-sm flex-shrink-0" style={{ backgroundColor: color.hex }} />
                     ))}
-                    <button 
+                    <button
                         onClick={() => {
                             handleTranslateFromSelection();
                             setSelectionMenu(null);
-                        }} 
+                        }}
                         className="w-8 h-8 md:w-8 md:h-8 rounded-full border border-blue-300 bg-blue-50 hover:bg-blue-100 hover:scale-110 transition shadow-sm flex items-center justify-center flex-shrink-0"
                         title="Traduzir seleção"
                         aria-label="Traduzir seleção"
                     >
                         <Languages size={16} className="text-blue-600" />
+                    </button>
+                    <button
+                        onClick={handleTTSFromSelection}
+                        className="w-8 h-8 md:w-8 md:h-8 rounded-full border border-green-300 bg-green-50 hover:bg-green-100 hover:scale-110 transition shadow-sm flex items-center justify-center flex-shrink-0"
+                        title="Ouvir seleção"
+                        aria-label="Ouvir seleção"
+                    >
+                        <Volume2 size={16} className="text-green-600" />
                     </button>
                     <button onClick={() => setSelectionMenu(null)} className="p-1 text-gray-500 hover:text-red-500 flex-shrink-0" aria-label="Fechar menu"><X size={18} /></button>
                 </div>
