@@ -15,6 +15,7 @@ from ai.providers import get_provider, ollama_provider
 from ai.rag import index_book, is_book_indexed, query_book
 from auth import get_current_user
 from database import engine, get_session
+from deep_translator import GoogleTranslator
 from services import get_pdf_service, PDFService
 from models import (
     Livro,
@@ -151,6 +152,7 @@ class TTSRequest(BaseModel):
     text: str
     voice: str = "Francisca"
     rate: float = 1.0  # 0.5–2.0 → "-50%" a "+100%"
+    translate: bool = False  # Traduzir para PT antes de gerar áudio
 
 
 # ---- ROUTES ----
@@ -450,10 +452,17 @@ async def text_to_speech(
     if body.voice not in VOICE_MAP:
         raise HTTPException(status_code=400, detail=f"Voz inválida: {body.voice}. Opções: {list(VOICE_MAP)}")
 
-    text = _corrigir_pronuncia(body.text.strip())
+    text = body.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Texto vazio")
 
+    if body.translate:
+        try:
+            text = GoogleTranslator(source='auto', target='pt').translate(text)
+        except Exception as e:
+            logger.warning(f"Falha na tradução Google: {e} — usando texto original")
+
+    text = _corrigir_pronuncia(text)
     voice_id = VOICE_MAP[body.voice]
 
     # Converter rate float (0.5–2.0) para formato edge_tts: "+10%", "-30%", etc.

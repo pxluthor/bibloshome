@@ -347,6 +347,7 @@ const VOICE_LABELS = { Francisca: 'Francisca (F)', Antonio: 'Antonio (M)', Thali
 const VozSubTab = ({ pageText, pageNumber }) => {
     const [voice, setVoice] = useState('Francisca');
     const [rate, setRate] = useState(1.0);
+    const [translate, setTranslate] = useState(false);
     const [loading, setLoading] = useState(false);
     const [playing, setPlaying] = useState(false);
     const [paused, setPaused] = useState(false);
@@ -390,7 +391,7 @@ const VozSubTab = ({ pageText, pageNumber }) => {
                     'Content-Type': 'application/json',
                     Authorization: `Bearer ${localStorage.getItem('token')}`,
                 },
-                body: JSON.stringify({ text: pageText, voice, rate }),
+                body: JSON.stringify({ text: pageText, voice, rate, translate }),
                 signal: controller.signal,
             });
 
@@ -467,6 +468,19 @@ const VozSubTab = ({ pageText, pageNumber }) => {
                     className="mt-1 w-full accent-blue-600"
                 />
             </div>
+
+            {/* Toggle traduzir para PT */}
+            <button
+                onClick={() => setTranslate(t => !t)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-semibold transition w-full ${
+                    translate
+                        ? 'bg-green-600 text-white border-green-600'
+                        : 'bg-white text-gray-500 border-gray-200 hover:border-green-400 hover:text-green-600'
+                }`}
+            >
+                <span className="text-base">{translate ? '🇧🇷' : '🌐'}</span>
+                {translate ? 'Traduzir para PT ativado' : 'Traduzir para PT'}
+            </button>
 
             {error && (
                 <div className="flex items-center gap-2 text-red-500 text-xs">
