@@ -2,7 +2,9 @@ import asyncio
 import json
 import logging
 import os
+import re
 
+import edge_tts
 import fitz  # PyMuPDF
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -112,6 +114,42 @@ async def _run_index(livro_id: int, caminho: str):
         logger.error(f"Erro ao indexar livro {livro_id}: {e}")
         indexing_tasks[livro_id] = "error"
         await _upsert_ia_status(livro_id, "error", error_msg=str(e))
+
+
+# ---- TTS ----
+
+VOICE_MAP = {
+    "Francisca": "pt-BR-FranciscaNeural",
+    "Antonio": "pt-BR-AntonioNeural",
+    "Thalita": "pt-BR-ThalitaNeural",
+}
+
+_PRONUNCIA_PT = {
+    r"\bIA\b": "IÁ",
+    r"\bIAs\b": "IÁS",
+    r"\bIA's\b": "IÁss",
+    r"\bLLM\b": "ÉLe Éle M",
+    r"\bLLMs\b": "ÉLe Éle ÊMES",
+    r"\bAPI\b": "Á P Í",
+    r"\bAPIs\b": "Á P ÍS",
+    r"\bCPU\b": "C P Ú",
+    r"\bGPU\b": "G P Ú",
+    r"\bGPT\b": "G P T",
+    r"\bJSON\b": "JÊIZON",
+    r"\bHTTP\b": "Ága T T P",
+}
+
+
+def _corrigir_pronuncia(texto: str) -> str:
+    for padrao, repl in _PRONUNCIA_PT.items():
+        texto = re.sub(padrao, repl, texto, flags=re.IGNORECASE)
+    return texto
+
+
+class TTSRequest(BaseModel):
+    text: str
+    voice: str = "Francisca"
+    rate: float = 1.0  # 0.5–2.0 → "-50%" a "+100%"
 
 
 # ---- ROUTES ----
@@ -394,3 +432,35 @@ async def chat_with_book(
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+@router.post("/tts")
+async def text_to_speech(
+    body: TTSRequest,
+    current_user: Usuario = Depends(get_current_user),
+):
+    """Gera áudio MP3 via edge_tts (vozes neurais pt-BR) e retorna como stream."""
+    if body.voice not in VOICE_MAP:
+        raise HTTPException(status_code=400, detail=f"Voz inválida: {body.voice}. Opções: {list(VOICE_MAP)}")
+
+    text = _corrigir_pronuncia(body.text.strip())
+    if not text:
+        raise HTTPException(status_code=400, detail="Texto vazio")
+
+    voice_id = VOICE_MAP[body.voice]
+
+    # Converter rate float (0.5–2.0) para formato edge_tts: "+10%", "-30%", etc.
+    rate_pct = int((body.rate - 1.0) * 100)
+    rate_str = f"+{rate_pct}%" if rate_pct >= 0 else f"{rate_pct}%"
+
+    async def audio_stream():
+        communicate = edge_tts.Communicate(text, voice_id, rate=rate_str)
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                yield chunk["data"]
+
+    return StreamingResponse(
+        audio_stream(),
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

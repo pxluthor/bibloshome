@@ -341,129 +341,156 @@ const ResumoSubTab = ({ livroId }) => {
 };
 
 // ─── SUB-ABA: VOZ (TTS) ───────────────────────────────────────────────────────
+const VOICES = ['Francisca', 'Antonio', 'Thalita'];
+const VOICE_LABELS = { Francisca: 'Francisca (F)', Antonio: 'Antonio (M)', Thalita: 'Thalita (F)' };
+
 const VozSubTab = ({ pageText, pageNumber }) => {
-    const [speaking, setSpeaking] = useState(false);
-    const [paused, setPaused] = useState(false);
-    const [voices, setVoices] = useState([]);
-    const [selectedVoice, setSelectedVoice] = useState('');
+    const [voice, setVoice] = useState('Francisca');
     const [rate, setRate] = useState(1.0);
-    const utteranceRef = useRef(null);
+    const [loading, setLoading] = useState(false);
+    const [playing, setPlaying] = useState(false);
+    const [paused, setPaused] = useState(false);
+    const [error, setError] = useState('');
+    const audioRef = useRef(null);
+    const abortRef = useRef(null);
 
-    useEffect(() => {
-        const loadVoices = () => {
-            const v = window.speechSynthesis.getVoices();
-            const ptVoices = v.filter(voice =>
-                voice.lang.startsWith('pt') || voice.lang.startsWith('en')
-            );
-            setVoices(ptVoices.length > 0 ? ptVoices : v.slice(0, 10));
-        };
-        loadVoices();
-        window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
-        return () => {
-            window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
-            window.speechSynthesis.cancel();
-        };
-    }, []);
-
-    // Stop when page changes
-    useEffect(() => {
-        window.speechSynthesis.cancel();
-        setSpeaking(false);
-        setPaused(false);
-    }, [pageNumber]);
-
-    const speak = () => {
-        if (!pageText?.trim()) return;
-        window.speechSynthesis.cancel();
-
-        const utterance = new SpeechSynthesisUtterance(pageText);
-        utterance.rate = rate;
-        if (selectedVoice) {
-            const voice = voices.find(v => v.name === selectedVoice);
-            if (voice) utterance.voice = voice;
+    const stopAudio = () => {
+        if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.src = '';
+            audioRef.current = null;
         }
-        utterance.onstart = () => { setSpeaking(true); setPaused(false); };
-        utterance.onend = () => { setSpeaking(false); setPaused(false); };
-        utterance.onerror = () => { setSpeaking(false); setPaused(false); };
+        if (abortRef.current) {
+            abortRef.current.abort();
+            abortRef.current = null;
+        }
+        setPlaying(false);
+        setPaused(false);
+        setLoading(false);
+    };
 
-        utteranceRef.current = utterance;
-        window.speechSynthesis.speak(utterance);
+    // Parar ao trocar de página
+    useEffect(() => { stopAudio(); }, [pageNumber]);
+    // Limpar ao desmontar
+    useEffect(() => () => stopAudio(), []);
+
+    const speak = async () => {
+        if (!pageText?.trim() || loading || playing) return;
+        setError('');
+        stopAudio();
+        setLoading(true);
+
+        const controller = new AbortController();
+        abortRef.current = controller;
+
+        try {
+            const res = await fetch(`${api.defaults.baseURL}/ai/tts`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('token')}`,
+                },
+                body: JSON.stringify({ text: pageText, voice, rate }),
+                signal: controller.signal,
+            });
+
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || 'Erro ao gerar áudio');
+            }
+
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            audioRef.current = audio;
+
+            audio.onplay   = () => { setPlaying(true); setPaused(false); setLoading(false); };
+            audio.onpause  = () => setPaused(true);
+            audio.onended  = () => { setPlaying(false); setPaused(false); URL.revokeObjectURL(url); };
+            audio.onerror  = () => { setPlaying(false); setPaused(false); setLoading(false); URL.revokeObjectURL(url); };
+
+            await audio.play();
+        } catch (e) {
+            if (e.name !== 'AbortError') {
+                setError(e.message || 'Erro ao gerar áudio');
+                setLoading(false);
+            }
+        }
     };
 
     const togglePause = () => {
-        if (paused) {
-            window.speechSynthesis.resume();
+        if (!audioRef.current) return;
+        if (audioRef.current.paused) {
+            audioRef.current.play();
             setPaused(false);
         } else {
-            window.speechSynthesis.pause();
+            audioRef.current.pause();
             setPaused(true);
         }
-    };
-
-    const stop = () => {
-        window.speechSynthesis.cancel();
-        setSpeaking(false);
-        setPaused(false);
     };
 
     return (
         <div className="flex flex-col h-full gap-4">
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-700">
                 <p className="font-semibold mb-1">Leitura em Voz — Página {pageNumber}</p>
-                <p className="text-blue-500">
-                    Usando o sintetizador de voz do navegador. Qualidade pode variar por dispositivo.
-                </p>
+                <p className="text-blue-500">Vozes neurais pt-BR via Microsoft Edge TTS.</p>
             </div>
 
-            {/* Voice selector */}
-            {voices.length > 0 && (
-                <div>
-                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                        Voz
-                    </label>
-                    <select
-                        value={selectedVoice}
-                        onChange={e => setSelectedVoice(e.target.value)}
-                        className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-800 outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                        <option value="">Padrão do sistema</option>
-                        {voices.map(v => (
-                            <option key={v.name} value={v.name}>
-                                {v.name} ({v.lang})
-                            </option>
-                        ))}
-                    </select>
+            {/* Seletor de voz */}
+            <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Voz</label>
+                <div className="flex gap-2 mt-1">
+                    {VOICES.map(v => (
+                        <button
+                            key={v}
+                            onClick={() => setVoice(v)}
+                            className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition ${
+                                voice === v
+                                    ? 'bg-blue-600 text-white border-blue-600'
+                                    : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
+                            }`}
+                        >
+                            {VOICE_LABELS[v]}
+                        </button>
+                    ))}
                 </div>
-            )}
+            </div>
 
-            {/* Rate slider */}
+            {/* Velocidade */}
             <div>
                 <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
                     Velocidade: {rate.toFixed(1)}x
                 </label>
                 <input
-                    type="range"
-                    min="0.5"
-                    max="2.0"
-                    step="0.1"
-                    value={rate}
+                    type="range" min="0.5" max="2.0" step="0.1" value={rate}
                     onChange={e => setRate(parseFloat(e.target.value))}
                     className="mt-1 w-full accent-blue-600"
                 />
             </div>
 
-            {/* Controls */}
+            {error && (
+                <div className="flex items-center gap-2 text-red-500 text-xs">
+                    <AlertCircle size={14} /> {error}
+                </div>
+            )}
+
+            {/* Controles */}
             <div className="flex gap-2 mt-auto">
-                {!speaking ? (
+                {!playing && !loading && (
                     <button
                         onClick={speak}
                         disabled={!pageText?.trim()}
                         className="flex-1 flex items-center justify-center gap-2 py-3 bg-green-600 text-white rounded-xl font-semibold text-sm hover:bg-green-700 disabled:opacity-40 transition"
                     >
-                        <Play size={18} />
-                        Ler Página
+                        <Play size={18} /> Ler Página
                     </button>
-                ) : (
+                )}
+                {loading && (
+                    <button disabled className="flex-1 flex items-center justify-center gap-2 py-3 bg-green-600 text-white rounded-xl font-semibold text-sm opacity-70">
+                        <Loader2 size={18} className="animate-spin" /> Gerando…
+                    </button>
+                )}
+                {playing && (
                     <>
                         <button
                             onClick={togglePause}
@@ -473,7 +500,7 @@ const VozSubTab = ({ pageText, pageNumber }) => {
                             {paused ? 'Continuar' : 'Pausar'}
                         </button>
                         <button
-                            onClick={stop}
+                            onClick={stopAudio}
                             className="px-4 py-3 bg-red-500 text-white rounded-xl hover:bg-red-600 transition"
                         >
                             <Square size={18} />
@@ -482,9 +509,9 @@ const VozSubTab = ({ pageText, pageNumber }) => {
                 )}
             </div>
 
-            {speaking && (
+            {playing && (
                 <div className="flex items-center gap-2 text-green-600 text-xs">
-                    <Volume2 size={14} className="animate-pulse" />
+                    <Volume2 size={14} className={paused ? '' : 'animate-pulse'} />
                     {paused ? 'Pausado' : 'Lendo…'}
                 </div>
             )}
