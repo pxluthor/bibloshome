@@ -204,6 +204,7 @@ const AdminBd = () => {
     const [moverArquivo, setMoverArquivo] = useState(true);
     const [insertResult, setInsertResult] = useState(null);
     const [loadingInsert, setLoadingInsert] = useState(false);
+    const [loadingExtract, setLoadingExtract] = useState(false);
     const [bookForm, setBookForm] = useState({ titulo: '', autor: '', editora: '', ano: '', paginas: '', genero: '', idioma: '', area: '', sinopse: '' });
 
     useEffect(() => {
@@ -279,6 +280,31 @@ const AdminBd = () => {
     const handleFormChange = e => {
         const { name, value } = e.target;
         setBookForm(f => ({ ...f, [name]: value }));
+    };
+
+    const handleExtractMetadata = async () => {
+        if (!selectedFile) return;
+        setLoadingExtract(true);
+        try {
+            const r = await api.post('/ai/extract-metadata', { caminho: selectedFile.caminho_abs });
+            if (r.data.error) { alert('IA não conseguiu extrair metadados: ' + r.data.error); return; }
+            const d = r.data;
+            setBookForm(f => ({
+                ...f,
+                titulo: d.titulo || f.titulo,
+                autor: d.autor || f.autor,
+                editora: d.editora || f.editora,
+                ano: d.ano ? String(d.ano) : f.ano,
+                paginas: d.paginas ? String(d.paginas) : f.paginas,
+                genero: d.genero || f.genero,
+                idioma: d.idioma || f.idioma,
+                sinopse: d.sinopse || f.sinopse,
+            }));
+        } catch (e) {
+            alert('Erro ao extrair metadados: ' + (e.response?.data?.detail || e.message));
+        } finally {
+            setLoadingExtract(false);
+        }
     };
 
     const handleInsert = async e => {
@@ -556,7 +582,14 @@ const AdminBd = () => {
                                     <button type="button" onClick={() => setSelectedFile(null)} className="ml-auto text-blue-400 hover:text-blue-600"><X size={16} /></button>
                                 </div>
 
-                                <h3 className="font-semibold text-gray-900">2. Metadados do livro</h3>
+                                <div className="flex items-center justify-between">
+                                    <h3 className="font-semibold text-gray-900">2. Metadados do livro</h3>
+                                    <button type="button" onClick={handleExtractMetadata} disabled={loadingExtract}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 transition">
+                                        {loadingExtract ? <Loader2 size={13} className="animate-spin" /> : <span>✨</span>}
+                                        Extrair com IA
+                                    </button>
+                                </div>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                                     <InputField label="Título" name="titulo" value={bookForm.titulo} onChange={handleFormChange} placeholder="Título do livro" required span2 />
                                     <InputField label="Autor" name="autor" value={bookForm.autor} onChange={handleFormChange} placeholder="Nome do autor" />

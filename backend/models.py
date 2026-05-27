@@ -125,6 +125,32 @@ class AnotacaoUpdate(SQLModel):
     lastPage: Optional[int] = None
     totalPages: Optional[int] = None
 
+# --- IA / AI SETTINGS ---
+class UsuarioAISettings(SQLModel, table=True):
+    __tablename__ = "usuario_ai_settings"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", unique=True, index=True)
+    provider: str = Field(default="ollama")        # "ollama" | "openai"
+    chat_model: str = Field(default="llama3.1:8b")
+    openai_api_key: Optional[str] = Field(default=None)
+
+class UsuarioAISettingsUpdate(SQLModel):
+    provider: str
+    chat_model: str
+    openai_api_key: Optional[str] = None
+
+class LivroIAStatus(SQLModel, table=True):
+    __tablename__ = "livros_ia_status"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    livro_id: int = Field(foreign_key="livros.id", unique=True, index=True)
+    status: str = Field(default="not_indexed")  # not_indexed | indexing | ready | error
+    pages_indexed: int = Field(default=0)
+    error_msg: Optional[str] = Field(default=None)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 # --- PEDIDOS DE LIVROS ---
 class PedidoLivro(SQLModel, table=True):
     __tablename__ = "pedidos_livros"

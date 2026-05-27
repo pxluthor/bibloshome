@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routes import router
 from admin_bd_routes import router as admin_bd_router
+from ai_routes import router as ai_router
 from database import create_db_and_tables
 
 app = FastAPI(title="PDF Translator API")
@@ -33,6 +34,7 @@ def on_startup():
 
 app.include_router(router)
 app.include_router(admin_bd_router)
+app.include_router(ai_router)
 
 @app.get("/")
 def read_root():

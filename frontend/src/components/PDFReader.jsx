@@ -4,13 +4,14 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import {
     ArrowLeft, ZoomIn, ZoomOut, Bookmark, Maximize, Minimize,
     X, Languages, FileText, ChevronLeft, ChevronRight,
-    Columns, Square, PanelRightClose, PanelRightOpen
+    Columns, Square, PanelRightClose, PanelRightOpen, Bot
 } from 'lucide-react';
 
 import api from '../services/api';
 import { useSidebarResizer } from '../hooks/useSidebarResizer';
 import { usePDFAnnotations } from '../hooks/usePDFAnnotations';
 import { TranslationTab, NotesTab } from './Reader/SidebarTabs';
+import AITab from './Reader/AITab';
 
 import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
 import 'react-pdf/dist/esm/Page/TextLayer.css';
@@ -51,6 +52,7 @@ const PDFReader = () => {
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [hasSelection, setHasSelection] = useState(false);
     const [readingStatus, setReadingStatus] = useState(null); // Estado para controlar se é 'lendo', 'concluido', etc.
+    const [currentPageText, setCurrentPageText] = useState(''); // Texto da página atual para TTS
     const initializedRef = useRef(false);
 
     // MEMOIZAÇÃO DO PDF - Evita recarregamento ao trocar abas ou redimensionar
@@ -88,6 +90,19 @@ const PDFReader = () => {
         setPageNumber(1);
         initializedRef.current = false;
     }, [id]);
+
+    // Extrai texto da página atual para TTS (lê do text layer do react-pdf)
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            const textLayer = document.querySelector(
+                `.react-pdf__Page__textContent`
+            );
+            if (textLayer) {
+                setCurrentPageText(textLayer.textContent || '');
+            }
+        }, 600);
+        return () => clearTimeout(timer);
+    }, [pageNumber]);
 
     // Busca o status inicial do livro na lista do usuário
     useEffect(() => {
@@ -381,9 +396,9 @@ const PDFReader = () => {
                       onContextMenu={(e) => e.preventDefault()}
                       onTouchStart={handleTouchStart}
                       onTouchEnd={handleTouchEnd}>
-                    <Document 
+                    <Document
                         file={pdfFile}
-                        onLoadSuccess={({ numPages }) => {
+                        onLoadSuccess={({ numPages, _pdfInfo }) => {
                             setNumPages(numPages);
                             updateTotalPages(numPages); // Salva o total de páginas no JSON de anotações
                         }}
@@ -423,21 +438,28 @@ const PDFReader = () => {
                     `}
                 >
                     <div className="flex border-b border-gray-200 flex-shrink-0">
-                        <button onClick={() => setActiveTab('translation')} className={`flex-1 py-4 flex items-center justify-center gap-2 ${activeTab === 'translation' ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50 font-bold' : 'text-gray-500'}`}>
-                            <Languages size={18} /> <span className="text-sm">Tradução</span>
+                        <button onClick={() => setActiveTab('translation')} className={`flex-1 py-3 flex flex-col items-center justify-center gap-0.5 text-xs ${activeTab === 'translation' ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50 font-bold' : 'text-gray-500'}`}>
+                            <Languages size={16} /> <span>Tradução</span>
                         </button>
-                        <button onClick={() => setActiveTab('notes')} className={`flex-1 py-4 flex items-center justify-center gap-2 ${activeTab === 'notes' ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50 font-bold' : 'text-gray-500'}`}>
-                            <FileText size={18} /> <span className="text-sm">Notas</span>
+                        <button onClick={() => setActiveTab('notes')} className={`flex-1 py-3 flex flex-col items-center justify-center gap-0.5 text-xs ${activeTab === 'notes' ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50 font-bold' : 'text-gray-500'}`}>
+                            <FileText size={16} /> <span>Notas</span>
+                        </button>
+                        <button onClick={() => setActiveTab('ai')} className={`flex-1 py-3 flex flex-col items-center justify-center gap-0.5 text-xs ${activeTab === 'ai' ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50 font-bold' : 'text-gray-500'}`}>
+                            <Bot size={16} /> <span>IA</span>
                         </button>
                     </div>
-                    <div className="flex-1 p-6 bg-gray-50 overflow-hidden">
-                        {activeTab === 'translation' ? (
+                    <div className="flex-1 p-4 bg-gray-50 overflow-hidden flex flex-col">
+                        {activeTab === 'translation' && (
                             <TranslationTab pageNumber={pageNumber} translation={translation} loadingTranslation={loadingTranslation} handleTranslate={handleTranslate} />
-                        ) : (
-                            <NotesTab 
-                                pageNumber={pageNumber} 
-                                notes={notes} 
-                                onNoteChange={updateNote} 
+                        )}
+                        {activeTab === 'ai' && (
+                            <AITab livroId={id} pageNumber={pageNumber} pageText={currentPageText} />
+                        )}
+                        {activeTab === 'notes' && (
+                            <NotesTab
+                                pageNumber={pageNumber}
+                                notes={notes}
+                                onNoteChange={updateNote}
                                 isSaving={isSaving}
                                 onNavigate={(p) => {
                                     setPageNumber(p);
