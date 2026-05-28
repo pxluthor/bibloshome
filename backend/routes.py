@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Body, Response, Query
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select, func
-from sqlalchemy import or_
+from sqlalchemy import or_, func as sa_func
 from typing import List, Optional
 from datetime import datetime
 from database import get_session
@@ -16,12 +16,23 @@ def list_genres(session: Session = Depends(get_session)):
     rows = session.exec(select(Livro.genero).where(Livro.genero != None).distinct()).all()
     return sorted([r for r in rows if r])
 
+@router.get("/documents/tags")
+def list_tags(session: Session = Depends(get_session)):
+    """Retorna todas as tags distintas usadas nos livros."""
+    livros = session.exec(select(Livro.tags).where(Livro.tags != None)).all()
+    all_tags = set()
+    for tags in livros:
+        if isinstance(tags, list):
+            all_tags.update(tags)
+    return sorted(all_tags)
+
 @router.get("/documents")
 def list_documents(
     page: int = Query(1, ge=1),
     limit: int = Query(8, ge=1, le=100),
     search: str = Query(""),
     genre: str = Query(""),
+    tag: str = Query(""),
     session: Session = Depends(get_session)
 ):
     query = select(Livro)
@@ -31,6 +42,8 @@ def list_documents(
         )
     if genre:
         query = query.where(Livro.genero == genre)
+    if tag:
+        query = query.where(sa_func.json_contains(Livro.tags, f'"{tag}"'))
 
     total = session.exec(select(func.count()).select_from(query.subquery())).one()
     items = session.exec(query.offset((page - 1) * limit).limit(limit)).all()

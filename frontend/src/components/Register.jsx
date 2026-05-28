@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { UserPlus, User, Lock, Mail } from 'lucide-react';
 import api from '../services/api';
+import { toast } from '../utils/toast';
 
 const Register = () => {
     const [formData, setFormData] = useState({ nome: '', email: '', senha: '', is_admin: false });
@@ -20,7 +21,7 @@ const Register = () => {
         e.preventDefault();
         try {
             await api.post('/auth/register', formData);
-            alert("Cadastro realizado com sucesso! Faça login.");
+            toast.success("Cadastro realizado com sucesso! Faça login.");
             navigate('/login');
         } catch (err) {
             setError(err.response?.data?.detail || 'Erro ao cadastrar');

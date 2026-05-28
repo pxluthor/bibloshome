@@ -2,11 +2,11 @@
 from typing import Optional, Dict, Any, List
 from sqlmodel import Field, SQLModel
 from datetime import datetime
-from sqlalchemy import Column, JSON
+from sqlalchemy import Column, JSON, UniqueConstraint
 
 class Livro(SQLModel, table=True):
     __tablename__ = "livros"
-    
+
     id: Optional[int] = Field(default=None, primary_key=True)
     titulo: Optional[str]
     autor: Optional[str]
@@ -18,9 +18,9 @@ class Livro(SQLModel, table=True):
     paginas: Optional[int]
     sinopse: Optional[str]
     caminho: Optional[str]
-    capa: Optional[bytes] = Field(default=None)  
+    capa: Optional[bytes] = Field(default=None)
     data_adicao: Optional[datetime] = Field(default_factory=datetime.utcnow)
-    # capa: blob is skipped for now as we don't need it for this feature yet
+    tags: Optional[List] = Field(default=None, sa_column=Column(JSON))
 
 class LivroRead(SQLModel):
     id: int
@@ -34,6 +34,7 @@ class LivroRead(SQLModel):
     editora: Optional[str]
     sinopse: Optional[str]
     caminho: Optional[str]
+    tags: Optional[List] = None
 
 class LivroUpdate(SQLModel):
     titulo: Optional[str] = None
@@ -46,6 +47,7 @@ class LivroUpdate(SQLModel):
     genero: Optional[str] = None
     idioma: Optional[str] = None
     sinopse: Optional[str] = None
+    tags: Optional[List] = None
 
 # --- USUÁRIOS ---
 class Usuario(SQLModel, table=True):
@@ -152,6 +154,18 @@ class LivroIAStatus(SQLModel, table=True):
 
 
 # --- PEDIDOS DE LIVROS ---
+class EstudioArtefato(SQLModel, table=True):
+    __tablename__ = "estudio_artefatos"
+    __table_args__ = (UniqueConstraint("usuario_id", "livro_id", "tipo", name="uq_estudio_artefato"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    livro_id: int = Field(foreign_key="livros.id", index=True)
+    tipo: str  # quiz | flashcards | mindmap | audio_resumo
+    conteudo: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
+    saved_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class PedidoLivro(SQLModel, table=True):
     __tablename__ = "pedidos_livros"
     

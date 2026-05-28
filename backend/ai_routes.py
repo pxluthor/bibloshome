@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from ai.providers import get_provider, ollama_provider
-from ai.rag import index_book, is_book_indexed, query_book
+from ai.rag import index_book, is_book_indexed, query_book, count_indexed_pages
 from auth import get_current_user
 from database import engine, get_session
 from deep_translator import GoogleTranslator
@@ -34,8 +34,8 @@ OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 FOR_INSERT_DIR = os.getenv("FOR_INSERT_DIR", "/data/for_insert")
 PASTA_BIBLIOTECA = os.getenv("PASTA_BIBLIOTECA", "/data/biblioteca")
 
-# In-memory indexing status tracker
-indexing_tasks: dict[int, str] = {}
+# In-memory indexing status tracker — stores {status, pages_indexed, total_pages, error_msg}
+indexing_tasks: dict[int, dict] = {}
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
@@ -100,21 +100,47 @@ async def _upsert_ia_status(
 
 # ---- BACKGROUND INDEXER ----
 
-async def _run_index(livro_id: int, caminho: str):
+async def _run_index(
+    livro_id: int,
+    caminho: str,
+    page_ranges: list[tuple[int, int]] | None = None,
+):
     try:
-        indexing_tasks[livro_id] = "indexing"
+        # Quick scan to get total pages for progress tracking
+        doc = fitz.open(caminho)
+        total_pages = len(doc)
+        doc.close()
+
+        indexing_tasks[livro_id] = {
+            "status": "indexing",
+            "pages_indexed": 0,
+            "total_pages": total_pages,
+        }
         await _upsert_ia_status(livro_id, "indexing")
 
-        result = await index_book(livro_id, caminho)
+        async def on_progress(done: int, _total: int) -> None:
+            indexing_tasks[livro_id]["pages_indexed"] = done
+            await _upsert_ia_status(livro_id, "indexing", pages_indexed=done)
 
-        indexing_tasks[livro_id] = "ready"
-        await _upsert_ia_status(livro_id, "ready", pages_indexed=result["pages_indexed"])
-        logger.info(
-            f"Livro {livro_id} indexado: {result['pages_indexed']} páginas"
+        result = await index_book(
+            livro_id, caminho, on_progress=on_progress, page_ranges=page_ranges
         )
+
+        indexing_tasks[livro_id] = {
+            "status": "ready",
+            "pages_indexed": result["pages_indexed"],
+            "total_pages": total_pages,
+        }
+        await _upsert_ia_status(livro_id, "ready", pages_indexed=result["pages_indexed"])
+        logger.info(f"Livro {livro_id} indexado: {result['pages_indexed']} páginas")
     except Exception as e:
         logger.error(f"Erro ao indexar livro {livro_id}: {e}")
-        indexing_tasks[livro_id] = "error"
+        indexing_tasks[livro_id] = {
+            "status": "error",
+            "pages_indexed": 0,
+            "total_pages": 0,
+            "error_msg": str(e),
+        }
         await _upsert_ia_status(livro_id, "error", error_msg=str(e))
 
 
@@ -337,15 +363,14 @@ async def chat_status(
     current_user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    # Check in-memory task status first
-    mem_status = indexing_tasks.get(livro_id)
-    if mem_status in ("indexing", "error"):
-        row = session.exec(
-            select(LivroIAStatus).where(LivroIAStatus.livro_id == livro_id)
-        ).first()
+    # Check in-memory task status first (most up-to-date during active indexing)
+    mem = indexing_tasks.get(livro_id)
+    if mem and mem.get("status") in ("indexing", "error"):
         return {
-            "status": mem_status,
-            "pages_indexed": row.pages_indexed if row else 0,
+            "status": mem["status"],
+            "pages_indexed": mem.get("pages_indexed", 0),
+            "total_pages": mem.get("total_pages", 0),
+            "error_msg": mem.get("error_msg") if mem["status"] == "error" else None,
         }
 
     # Check persistent status
@@ -353,26 +378,36 @@ async def chat_status(
         select(LivroIAStatus).where(LivroIAStatus.livro_id == livro_id)
     ).first()
 
+    if row and row.status == "error":
+        return {"status": "error", "pages_indexed": 0, "total_pages": 0, "error_msg": row.error_msg}
+
     if row and row.status == "ready":
-        return {"status": "ready", "pages_indexed": row.pages_indexed}
+        return {"status": "ready", "pages_indexed": row.pages_indexed, "total_pages": row.pages_indexed, "error_msg": None}
 
     # Fallback: check ChromaDB directly
     indexed = is_book_indexed(livro_id)
     if indexed:
-        return {"status": "ready", "pages_indexed": row.pages_indexed if row else 0}
+        # Use DB value if available, otherwise count from ChromaDB
+        pi = row.pages_indexed if (row and row.pages_indexed > 0) else count_indexed_pages(livro_id)
+        return {"status": "ready", "pages_indexed": pi, "total_pages": pi, "error_msg": None}
 
-    return {"status": "not_indexed", "pages_indexed": 0}
+    return {"status": "not_indexed", "pages_indexed": 0, "total_pages": 0, "error_msg": None}
+
+
+class IndexRequest(BaseModel):
+    page_ranges: list[dict] = []  # [{"start": int, "end": int}] — empty = full book
 
 
 @router.post("/chat/{livro_id}/index")
 async def trigger_index(
     livro_id: int,
     background_tasks: BackgroundTasks,
+    body: IndexRequest | None = None,
     current_user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
     pdf_service: PDFService = Depends(get_pdf_service),
 ):
-    if indexing_tasks.get(livro_id) == "indexing":
+    if indexing_tasks.get(livro_id, {}).get("status") == "indexing":
         return {"message": "Indexação já em andamento", "livro_id": livro_id}
 
     livro = session.get(Livro, livro_id)
@@ -384,13 +419,50 @@ async def trigger_index(
     except Exception:
         raise HTTPException(status_code=404, detail="Arquivo PDF não encontrado")
 
-    background_tasks.add_task(_run_index, livro_id, file_path)
+    pr = (
+        [(r["start"], r["end"]) for r in body.page_ranges if "start" in r and "end" in r]
+        if body and body.page_ranges
+        else None
+    )
+    background_tasks.add_task(_run_index, livro_id, file_path, pr)
     return {"message": "Indexação iniciada", "livro_id": livro_id}
 
 
 class ChatRequest(BaseModel):
     message: str
     history: list[dict] = []
+    page_ranges: list[dict] = []  # [{"start": int, "end": int}] — optional chapter filter
+
+
+def _read_chapter_context(
+    livro: "Livro",
+    page_ranges: list[tuple[int, int]],
+    pdf_service: PDFService,
+) -> str:
+    """Read pages directly from PDF for chapter-scoped context (no ChromaDB needed)."""
+    try:
+        file_path = pdf_service.get_file_path(livro.caminho)
+    except Exception:
+        return ""
+    try:
+        doc = fitz.open(file_path)
+        pages: list[tuple[int, str]] = []
+        for s, e in page_ranges:
+            for i in range(s - 1, min(e, len(doc))):
+                text = doc[i].get_text("text").strip()
+                if text and len(text) >= 20:
+                    pages.append((i + 1, text[:2000]))
+        doc.close()
+    except Exception:
+        return ""
+
+    # Stratified sample if many pages — keep total context manageable
+    if len(pages) > 25:
+        step = max(1, len(pages) // 25)
+        pages = pages[::step][:25]
+
+    full = "\n\n".join(f"[Página {p}]\n{t}" for p, t in pages)
+    return full[:12000]  # hard cap
 
 
 @router.post("/chat/{livro_id}")
@@ -399,6 +471,7 @@ async def chat_with_book(
     body: ChatRequest,
     current_user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
+    pdf_service: PDFService = Depends(get_pdf_service),
 ):
     livro = session.get(Livro, livro_id)
     if not livro:
@@ -410,20 +483,26 @@ async def chat_with_book(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Check if indexed
-    if not is_book_indexed(livro_id):
-        async def not_indexed_gen():
-            yield f"data: {json.dumps({'error': 'Livro não indexado. Clique em Indexar primeiro.'})}\n\n"
-            yield "data: [DONE]\n\n"
-        return StreamingResponse(not_indexed_gen(), media_type="text/event-stream", headers=SSE_HEADERS)
+    if body.page_ranges:
+        # ── Estúdio mode: lê páginas direto do PDF (sem ChromaDB) ────────────
+        pr = [(r["start"], r["end"]) for r in body.page_ranges]
+        context = _read_chapter_context(livro, pr, pdf_service)
+        if not context:
+            async def pdf_err_gen():
+                yield f"data: {json.dumps({'error': 'Não foi possível ler o PDF.'})}\n\n"
+                yield "data: [DONE]\n\n"
+            return StreamingResponse(pdf_err_gen(), media_type="text/event-stream", headers=SSE_HEADERS)
+    else:
+        # ── Reader mode: busca semântica no ChromaDB (requer indexação) ──────
+        if not is_book_indexed(livro_id):
+            async def not_indexed_gen():
+                yield f"data: {json.dumps({'error': 'Livro não indexado. Use o Estúdio para indexar.'})}\n\n"
+                yield "data: [DONE]\n\n"
+            return StreamingResponse(not_indexed_gen(), media_type="text/event-stream", headers=SSE_HEADERS)
+        chunks = await query_book(livro_id, body.message, n_results=5)
+        context = "\n\n".join(f"[Página {c['page']}]\n{c['text']}" for c in chunks)
 
-    # Retrieve relevant chunks
-    chunks = await query_book(livro_id, body.message, n_results=5)
-    context = "\n\n".join(
-        f"[Página {c['page']}]\n{c['text']}" for c in chunks
-    )
     user_content = f"Contexto do livro:\n{context}\n\nPergunta: {body.message}"
-
     messages = list(body.history) + [{"role": "user", "content": user_content}]
 
     async def generate():

@@ -13,6 +13,8 @@ import AdminPedidos from './components/AdminPedidos';
 import EditBook from './components/EditBook';
 import Collections from './components/Collections';
 import AdminBd from './components/AdminBd';
+import Estudio from './components/Estudio';
+import Toaster from './components/Toaster';
 
 // --- COMPONENTE DE PROTEÇÃO (GUARDA) REFORMULADO ---
 const PrivateRoute = ({ children }) => {
@@ -110,14 +112,26 @@ const AdminRoute = ({ children }) => {
 function App() {
     return (
         <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+            <Toaster />
             <Routes>
                 {/* Rotas Públicas */}
                 <Route path="/login" element={<Login />} />
                 <Route path="/register" element={<Register />} />
 
                 {/* Rotas Protegidas */}
+                <Route path="/" element={<Navigate to="/meus-livros" replace />} />
+
                 <Route
-                    path="/"
+                    path="/acervo"
+                    element={
+                        <PrivateRoute>
+                            <DocumentList />
+                        </PrivateRoute>
+                    }
+                />
+
+                <Route
+                    path="/meus-livros"
                     element={
                         <PrivateRoute>
                             <DocumentList />
@@ -186,6 +200,15 @@ function App() {
                         <AdminRoute>
                             <AdminBd />
                         </AdminRoute>
+                    }
+                />
+
+                <Route
+                    path="/estudio/:id"
+                    element={
+                        <PrivateRoute>
+                            <Estudio />
+                        </PrivateRoute>
                     }
                 />
 

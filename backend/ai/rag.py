@@ -42,6 +42,7 @@ async def index_book(
     livro_id: int,
     caminho: str,
     on_progress: Optional[Callable[[int, int], Awaitable[None]]] = None,
+    page_ranges: list[tuple[int, int]] | None = None,
 ) -> dict:
     doc = fitz.open(caminho)
     total_pages = len(doc)
@@ -54,6 +55,13 @@ async def index_book(
             valid_pages.append((i + 1, text[:3000]))  # cap at 3000 chars per page
 
     doc.close()
+
+    # Filter to requested page ranges (partial/chapter-scoped indexing)
+    if page_ranges:
+        valid_pages = [
+            (pnum, text) for pnum, text in valid_pages
+            if any(s <= pnum <= e for s, e in page_ranges)
+        ]
 
     client = get_chroma_client()
     col = client.get_or_create_collection(collection_name(livro_id), embedding_function=None)
@@ -95,7 +103,12 @@ async def index_book(
     }
 
 
-async def query_book(livro_id: int, query: str, n_results: int = 5) -> list[dict]:
+async def query_book(
+    livro_id: int,
+    query: str,
+    n_results: int = 5,
+    page_ranges: list[tuple[int, int]] | None = None,
+) -> list[dict]:
     client = get_chroma_client()
     try:
         col = client.get_collection(collection_name(livro_id))
@@ -106,9 +119,25 @@ async def query_book(livro_id: int, query: str, n_results: int = 5) -> list[dict
         return []
 
     query_embedding = await get_embedding([query])
+
+    # Build optional page filter for chapter-scoped queries
+    where = None
+    if page_ranges:
+        if len(page_ranges) == 1:
+            s, e = page_ranges[0]
+            where = {"$and": [{"page": {"$gte": s}}, {"page": {"$lte": e}}]}
+        else:
+            where = {
+                "$or": [
+                    {"$and": [{"page": {"$gte": s}}, {"page": {"$lte": e}}]}
+                    for s, e in page_ranges
+                ]
+            }
+
     results = col.query(
         query_embeddings=query_embedding,
         n_results=min(n_results, col.count()),
+        **({"where": where} if where else {}),
     )
 
     chunks = []
@@ -130,3 +159,13 @@ def is_book_indexed(livro_id: int) -> bool:
         return col.count() > 0
     except Exception:
         return False
+
+
+def count_indexed_pages(livro_id: int) -> int:
+    """Return the number of chunks in the ChromaDB collection (approximates pages indexed)."""
+    try:
+        client = get_chroma_client()
+        col = client.get_collection(collection_name(livro_id))
+        return col.count()
+    except Exception:
+        return 0

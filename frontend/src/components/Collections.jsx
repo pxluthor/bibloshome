@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Library, FolderOpen, Trash2, Edit2, Check, X, BookOpen, Loader2 } from 'lucide-react';
 import api from '../services/api';
 import UserMenu from './UserMenu';
+import { toast } from '../utils/toast';
 
 const Collections = () => {
     const [collections, setCollections] = useState([]);
@@ -44,7 +45,7 @@ const Collections = () => {
             setRenamingId(null);
         } catch (error) {
             console.error('Erro ao renomear:', error);
-            alert('Erro ao renomear coleção.');
+            toast.error('Erro ao renomear coleção.');
         }
     };
 
@@ -57,7 +58,7 @@ const Collections = () => {
             if (selectedId === id) setSelectedId(updated[0]?.id ?? null);
         } catch (error) {
             console.error('Erro ao deletar:', error);
-            alert('Erro ao deletar coleção.');
+            toast.error('Erro ao deletar coleção.');
         }
     };
 
@@ -75,7 +76,7 @@ const Collections = () => {
             }));
         } catch (error) {
             console.error('Erro ao remover livro:', error);
-            alert('Erro ao remover livro da coleção.');
+            toast.error('Erro ao remover livro da coleção.');
         }
     };
 

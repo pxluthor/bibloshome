@@ -1,13 +1,20 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { 
-    Search, BookOpen, Plus, Library, 
-    Calendar, User, Tag, ChevronLeft, ChevronRight, 
-    Bookmark, Trash2, Filter, X, LayoutGrid, List, Edit, FolderPlus, Check
+import { useNavigate, useLocation } from 'react-router-dom';
+import {
+    Search, BookOpen, Plus, Library,
+    Calendar, User, Tag, ChevronLeft, ChevronRight,
+    Bookmark, Trash2, Filter, X, LayoutGrid, List, Edit, FolderPlus, Check, ChevronDown
 } from 'lucide-react';
 import api from '../services/api';
 import BookCardSkeleton from './BookCardSkeleton';
 import UserMenu from './UserMenu';
+import { toast } from '../utils/toast';
+
+const PREDEFINED_GENRES = [
+    'Historia', 'Literatura', 'Ciencia e Tecnologia', 'Ciencias Sociais',
+    'Artes e Cultura', 'Religiao e Filosofia', 'Lifestyle', 'Educacao',
+    'Saude e Medicina', 'Direito', 'Negocios'
+];
 
 const DocumentList = () => {
     // --- ESTADOS DE DADOS ---
@@ -17,10 +24,14 @@ const DocumentList = () => {
     const [myListBooks, setMyListBooks] = useState([]);
     const [collections, setCollections] = useState([]);
     const [availableGenres, setAvailableGenres] = useState([]);
+    const [availableTags, setAvailableTags] = useState([]);
+    const [selectedTag, setSelectedTag] = useState(null);
     const [totalItems, setTotalItems] = useState(0);
+    const [filtersOpen, setFiltersOpen] = useState(false);
 
     // --- ESTADOS DE CONTROLE ---
-    const [viewMode, setViewMode] = useState('all');
+    const location = useLocation();
+    const viewMode = location.pathname.startsWith('/meus-livros') ? 'my_list' : 'all';
     const [viewLayout, setViewLayout] = useState('grid');
     const [searchTerm, setSearchTerm] = useState("");
     const [selectedGenre, setSelectedGenre] = useState(null);
@@ -51,8 +62,8 @@ const DocumentList = () => {
 
     // Paginação server-side: re-fetch ao mudar página, gênero ou viewMode
     useEffect(() => {
-        if (viewMode === 'all') fetchDocuments(currentPage, searchTerm, selectedGenre);
-    }, [currentPage, selectedGenre, viewMode]);
+        if (viewMode === 'all') fetchDocuments(currentPage, searchTerm, selectedGenre, selectedTag);
+    }, [currentPage, selectedGenre, selectedTag, viewMode]);
 
     // Debounce de busca: só dispara 400ms após parar de digitar
     useEffect(() => {
@@ -60,7 +71,7 @@ const DocumentList = () => {
         clearTimeout(searchDebounceRef.current);
         searchDebounceRef.current = setTimeout(() => {
             setCurrentPage(1);
-            fetchDocuments(1, searchTerm, selectedGenre);
+            fetchDocuments(1, searchTerm, selectedGenre, selectedTag);
         }, 400);
         return () => clearTimeout(searchDebounceRef.current);
     }, [searchTerm]);
@@ -68,16 +79,17 @@ const DocumentList = () => {
     // Resetar página ao trocar aba ou gênero
     useEffect(() => {
         setCurrentPage(1);
-    }, [viewMode, selectedGenre]);
+    }, [viewMode, selectedGenre, selectedTag]);
 
     const fetchInitialData = async () => {
         try {
             setLoading(true);
-            const [docsResponse, myListResponse, collectionsResponse, genresResponse] = await Promise.all([
+            const [docsResponse, myListResponse, collectionsResponse, genresResponse, tagsResponse] = await Promise.all([
                 api.get('/documents', { params: { page: 1, limit: itemsPerPage } }),
                 api.get('/my-list').catch(() => ({ data: [] })),
                 api.get('/collections').catch(() => ({ data: [] })),
-                api.get('/documents/genres').catch(() => ({ data: [] }))
+                api.get('/documents/genres').catch(() => ({ data: [] })),
+                api.get('/documents/tags').catch(() => ({ data: [] }))
             ]);
 
             const docsData = docsResponse.data;
@@ -107,6 +119,7 @@ const DocumentList = () => {
             setMyListBooks(listBooks);
             setCollections(Array.isArray(collectionsResponse.data) ? collectionsResponse.data : []);
             setAvailableGenres(Array.isArray(genresResponse.data) ? genresResponse.data : []);
+            setAvailableTags(Array.isArray(tagsResponse.data) ? tagsResponse.data : []);
         } catch (error) {
             console.error("Erro ao buscar dados iniciais:", error);
         } finally {
@@ -114,12 +127,13 @@ const DocumentList = () => {
         }
     };
 
-    const fetchDocuments = async (page, search, genre) => {
+    const fetchDocuments = async (page, search, genre, tag) => {
         try {
             setLoading(true);
             const params = { page, limit: itemsPerPage };
             if (search) params.search = search;
             if (genre) params.genre = genre;
+            if (tag) params.tag = tag;
             const response = await api.get('/documents', { params });
             setDocuments(Array.isArray(response.data.items) ? response.data.items : []);
             setTotalItems(response.data.total ?? 0);
@@ -161,7 +175,7 @@ const DocumentList = () => {
             await fetchData(); // Recarrega os dados da lista para obter total_pages
         } catch (error) {
             console.error("Erro ao adicionar:", error);
-            alert("Erro ao adicionar livro.");
+            toast.error("Erro ao adicionar livro.");
         } finally {
             setActionLoading(null);
         }
@@ -181,7 +195,7 @@ const DocumentList = () => {
             });
         } catch (error) {
             console.error("Erro ao remover:", error);
-            alert("Erro ao remover livro.");
+            toast.error("Erro ao remover livro.");
         } finally {
             setActionLoading(null);
         }
@@ -215,7 +229,7 @@ const DocumentList = () => {
             await refreshCollections();
         } catch (error) {
             console.error("Erro ao adicionar a colecao:", error);
-            alert(error.response?.data?.detail || "Erro ao adicionar livro a colecao.");
+            toast.error(error.response?.data?.detail || "Erro ao adicionar livro a colecao.");
         } finally {
             setCollectionLoading(null);
         }
@@ -234,7 +248,7 @@ const DocumentList = () => {
             await refreshCollections();
         } catch (error) {
             console.error("Erro ao criar colecao:", error);
-            alert(error.response?.data?.detail || "Erro ao criar colecao.");
+            toast.error(error.response?.data?.detail || "Erro ao criar colecao.");
         } finally {
             setCollectionLoading(null);
         }
@@ -316,6 +330,7 @@ const DocumentList = () => {
     const myListFiltered = useMemo(() => {
         let data = myListBooks;
         if (selectedGenre) data = data.filter(doc => doc.genero === selectedGenre);
+        if (selectedTag) data = data.filter(doc => Array.isArray(doc.tags) && doc.tags.includes(selectedTag));
         if (searchTerm.trim()) {
             const lowerTerm = searchTerm.toLowerCase();
             data = data.filter(doc =>
@@ -324,7 +339,7 @@ const DocumentList = () => {
             );
         }
         return data;
-    }, [myListBooks, selectedGenre, searchTerm]);
+    }, [myListBooks, selectedGenre, selectedTag, searchTerm]);
 
     const myListTotal = myListFiltered.length;
     const myListTotalPages = Math.ceil(myListTotal / itemsPerPage);
@@ -347,13 +362,13 @@ const DocumentList = () => {
     };
 
     return (
-        <div className="min-h-screen bg-gray-50 text-blue-600 font-sans pb-20">
+        <div className="min-h-screen bg-gray-50 text-blue-600 font-sans pb-20 overflow-x-hidden">
             {/* HEADER */}
             <header className="bg-white shadow-sm sticky top-0 z-20">
-                <div className="max-w-7xl mx-auto px-4 h-20 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                        <div className="bg-blue-600 text-white p-2 rounded-lg"><Library size={24} /></div>
-                        <h1 className="text-xl font-bold tracking-tight">Library<span className="text-green-600">Anywhere</span></h1>
+                <div className="max-w-7xl mx-auto px-4 h-16 sm:h-20 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                        <div className="bg-blue-600 text-white p-1.5 sm:p-2 rounded-lg flex-shrink-0"><Library size={20} /></div>
+                        <h1 className="text-base sm:text-xl font-bold tracking-tight truncate">Library<span className="text-green-600">Anywhere</span></h1>
                     </div>
                     <UserMenu userName={userName} isAdmin={isAdmin} pedidosPendentes={pedidosPendentes} adminPendentes={adminPendentes} />
                 </div>
@@ -361,270 +376,409 @@ const DocumentList = () => {
 
             <main className="max-w-7xl mx-auto px-4 py-8">
                 {/* CONTROLES */}
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 md:gap-6 mb-8">
-                    <div className="flex flex-wrap items-center gap-4 w-full md:w-auto">
-                        <div className="flex bg-white p-1 rounded-xl shadow-sm border border-gray-200">
+                <div className="flex flex-col gap-3 mb-6">
+                    {/* Linha 1: Tabs + Toggle */}
+                    <div className="flex items-center gap-2">
+                        {/* Tabs — flex-1 para preencher o espaço, texto curto no mobile */}
+                        <div className="flex flex-1 min-w-0 bg-white p-1 rounded-xl shadow-sm border border-gray-200">
+                            {/* Acervo */}
                             <button
-                                onClick={() => setViewMode('all')}
-                                className={`px-6 py-2 rounded-lg text-sm font-medium transition-all ${viewMode === 'all' ? 'bg-blue-100 text-blue-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}
+                                onClick={() => navigate('/acervo')}
+                                className={`flex-1 flex items-center justify-center gap-1.5 px-2 sm:px-5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${viewMode === 'all' ? 'bg-blue-100 text-blue-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}
+                                title="Acervo Completo"
                             >
-                                Acervo Completo
+                                <Library size={15} className="flex-shrink-0" />
+                                <span className="hidden sm:inline">Acervo Completo</span>
                             </button>
+                            {/* Meus Livros */}
                             <button
-                                onClick={() => setViewMode('my_list')}
-                                className={`px-6 py-2 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${viewMode === 'my_list' ? 'bg-blue-100 text-blue-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}
+                                onClick={() => navigate('/meus-livros')}
+                                className={`flex-1 flex items-center justify-center gap-1.5 px-2 sm:px-5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${viewMode === 'my_list' ? 'bg-blue-100 text-blue-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}
+                                title="Meus Livros"
                             >
-                                <Bookmark size={16} />
-                                Meus Livros
+                                <Bookmark size={15} className="flex-shrink-0" />
+                                <span className="hidden sm:inline">Meus Livros</span>
                                 {myListIds.size > 0 && (
-                                    <span className="ml-2 bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full font-semibold">
+                                    <span className="bg-blue-600 text-white text-[10px] sm:text-xs px-1.5 py-0.5 rounded-full font-semibold leading-none">
                                         {myListIds.size}
                                     </span>
                                 )}
                             </button>
+                            {/* Coleções */}
                             <button
                                 onClick={() => navigate('/colecoes')}
-                                className="px-6 py-2 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 text-gray-500 hover:bg-gray-50"
+                                className="flex-1 flex items-center justify-center gap-1.5 px-2 sm:px-5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all text-gray-500 hover:bg-gray-50"
+                                title="Coleções"
                             >
-                                <FolderPlus size={16} />
-                                Coleções
+                                <FolderPlus size={15} className="flex-shrink-0" />
+                                <span className="hidden sm:inline">Coleções</span>
                                 {collections.length > 0 && (
-                                    <span className="ml-2 bg-violet-600 text-white text-xs px-2 py-0.5 rounded-full font-semibold">
+                                    <span className="bg-violet-600 text-white text-[10px] sm:text-xs px-1.5 py-0.5 rounded-full font-semibold leading-none">
                                         {collections.length}
                                     </span>
                                 )}
                             </button>
                         </div>
-                        
+
                         {/* Toggle Grid/Lista */}
-                        <div className="flex bg-white p-1 rounded-xl shadow-sm border border-gray-200">
+                        <div className="flex flex-shrink-0 bg-white p-1 rounded-xl shadow-sm border border-gray-200">
                             <button
                                 onClick={() => setViewLayout('grid')}
                                 className={`p-2 rounded-lg transition-all ${viewLayout === 'grid' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}
                                 title="Modo Grade"
                             >
-                                <LayoutGrid size={20} />
+                                <LayoutGrid size={18} />
                             </button>
                             <button
                                 onClick={() => setViewLayout('list')}
                                 className={`p-2 rounded-lg transition-all ${viewLayout === 'list' ? 'bg-blue-100 text-blue-700' : 'text-gray-500 hover:bg-gray-50'}`}
                                 title="Modo Lista"
                             >
-                                <List size={20} />
+                                <List size={18} />
                             </button>
                         </div>
                     </div>
 
-                    <div className="relative w-full md:w-96 group">
-                        <Search size={18} className="absolute left-3 top-3.5 text-gray-400 group-focus-within:text-blue-500" />
-                        <input
-                            type="text"
-                            placeholder="Buscar título ou autor..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                        />
+                    {/* Linha 2: Busca + Filtros na mesma linha */}
+                    <div className="flex items-center gap-2">
+                        <div className="relative flex-1 group">
+                            <Search size={16} className="absolute left-3 top-3.5 text-gray-400 group-focus-within:text-blue-500" />
+                            <input
+                                type="text"
+                                placeholder="Buscar título ou autor..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                className="w-full pl-9 pr-4 py-3 text-sm border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all bg-white"
+                            />
+                        </div>
+
+                        {/* Botão Filtros inline */}
+                        {!loading && (() => {
+                            const activeCount = (selectedGenre ? 1 : 0) + (selectedTag ? 1 : 0);
+                            return (
+                                <button
+                                    onClick={() => setFiltersOpen(o => !o)}
+                                    className={`flex-shrink-0 flex items-center gap-2 px-3 py-3 rounded-xl border text-sm font-medium transition-all ${
+                                        filtersOpen
+                                            ? 'bg-blue-50 border-blue-300 text-blue-700'
+                                            : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300 hover:text-blue-600'
+                                    }`}
+                                >
+                                    <Filter size={14} />
+                                    Filtros
+                                    {activeCount > 0 && (
+                                        <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] font-bold">
+                                            {activeCount}
+                                        </span>
+                                    )}
+                                    <ChevronDown size={14} className={`transition-transform duration-200 ${filtersOpen ? 'rotate-180' : ''}`} />
+                                </button>
+                            );
+                        })()}
                     </div>
                 </div>
 
-                {/* FILTRO POR GÊNERO */}
-                {!loading && availableGenres.length > 0 && (
-                    <div className="mb-6">
-                        <div className="flex items-center gap-2 mb-3">
-                            <Filter size={18} className="text-gray-600" />
-                            <span className="text-sm font-semibold text-gray-700">Filtrar por gênero:</span>
-                            {selectedGenre && (
-                                <button
-                                    onClick={() => setSelectedGenre(null)}
-                                    className="ml-auto flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 font-medium"
-                                >
-                                    <X size={14} />
-                                    Limpar filtro
-                                </button>
+                {/* FILTROS COLAPSÁVEIS */}
+                {!loading && (() => {
+                    const genreList = Array.from(new Set([...PREDEFINED_GENRES, ...availableGenres]));
+                    const activeCount = (selectedGenre ? 1 : 0) + (selectedTag ? 1 : 0);
+                    return (
+                        <div className="mb-5">
+                            {/* Chips dos filtros ativos + limpar tudo */}
+                            {!filtersOpen && activeCount > 0 && (
+                                <div className="flex items-center gap-1.5 flex-wrap mb-2">
+                                    {selectedGenre && (
+                                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs font-medium">
+                                            {selectedGenre}
+                                            <button onClick={() => setSelectedGenre(null)} className="hover:text-blue-900"><X size={10} /></button>
+                                        </span>
+                                    )}
+                                    {selectedTag && (
+                                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs font-medium">
+                                            #{selectedTag}
+                                            <button onClick={() => setSelectedTag(null)} className="hover:text-blue-900"><X size={10} /></button>
+                                        </span>
+                                    )}
+                                    <button
+                                        onClick={() => { setSelectedGenre(null); setSelectedTag(null); }}
+                                        className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+                                    >
+                                        <X size={11} /> Limpar tudo
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Painel expansível */}
+                            {filtersOpen && (
+                                <div className="border border-gray-200 rounded-xl bg-white p-4 space-y-4">
+                                    {/* Gênero */}
+                                    <div>
+                                        <div className="flex items-center gap-1.5 mb-2">
+                                            <Filter size={13} className="text-gray-400" />
+                                            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Gênero</span>
+                                        </div>
+                                        <div className="flex gap-2 flex-wrap">
+                                            <button
+                                                onClick={() => setSelectedGenre(null)}
+                                                className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                                                    selectedGenre === null
+                                                        ? 'bg-blue-600 text-white shadow-sm'
+                                                        : 'bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-600'
+                                                }`}
+                                            >
+                                                Todos
+                                            </button>
+                                            {genreList.map((genre) => (
+                                                <button
+                                                    key={genre}
+                                                    onClick={() => setSelectedGenre(genre)}
+                                                    className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                                                        selectedGenre === genre
+                                                            ? 'bg-blue-600 text-white shadow-sm'
+                                                            : 'bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-600'
+                                                    }`}
+                                                >
+                                                    {genre}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Tags */}
+                                    {availableTags.length > 0 && (
+                                        <div>
+                                            <div className="flex items-center gap-1.5 mb-2">
+                                                <Tag size={13} className="text-gray-400" />
+                                                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Tags</span>
+                                            </div>
+                                            <div className="flex gap-2 flex-wrap">
+                                                <button
+                                                    onClick={() => setSelectedTag(null)}
+                                                    className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                                                        selectedTag === null
+                                                            ? 'bg-blue-600 text-white shadow-sm'
+                                                            : 'bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-600'
+                                                    }`}
+                                                >
+                                                    Todos
+                                                </button>
+                                                {availableTags.map((tag) => (
+                                                    <button
+                                                        key={tag}
+                                                        onClick={() => setSelectedTag(tag)}
+                                                        className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                                                            selectedTag === tag
+                                                                ? 'bg-blue-600 text-white shadow-sm'
+                                                                : 'bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-600'
+                                                        }`}
+                                                    >
+                                                        #{tag}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             )}
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                            {/* Chip "Todos" */}
-                            <button
-                                onClick={() => setSelectedGenre(null)}
-                                className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
-                                    selectedGenre === null
-                                        ? 'bg-blue-600 text-white shadow-md'
-                                        : 'bg-white text-gray-700 border border-gray-200 hover:border-blue-400 hover:text-blue-600'
-                                }`}
-                            >
-                                Todos
-                            </button>
-                            {/* Chips de gêneros */}
-                            {availableGenres.map((genre) => (
-                                <button
-                                    key={genre}
-                                    onClick={() => setSelectedGenre(genre)}
-                                    className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
-                                        selectedGenre === genre
-                                            ? 'bg-blue-600 text-white shadow-md'
-                                            : 'bg-white text-gray-700 border border-gray-200 hover:border-blue-400 hover:text-blue-600'
-                                    }`}
-                                >
-                                    {genre}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                )}
+                    );
+                })()}
 
                 {/* RESULTADOS */}
                 {loading ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-3">
                         {Array.from({ length: itemsPerPage }).map((_, index) => (
                             <BookCardSkeleton key={index} />
                         ))}
                     </div>
                 ) : (
                     <>
-                        <div className="mb-4 text-sm text-gray-500">
-                            Mostrando {currentItems.length} de {displayTotal} livros encontrados
+                        <div className="mb-4 flex items-center gap-3 flex-wrap">
+                            <span className="text-sm text-gray-500">
+                                Mostrando {currentItems.length} de {displayTotal} livros encontrados
+                            </span>
+                            {viewMode === 'my_list' && searchTerm && displayTotal === 0 && (
+                                <button
+                                    onClick={() => navigate('/acervo')}
+                                    className="text-sm text-blue-600 hover:text-blue-700 font-medium underline underline-offset-2"
+                                >
+                                    Buscar no Acervo Completo →
+                                </button>
+                            )}
                         </div>
 
                         {currentItems.length > 0 ? (
                             <>
                                 {viewLayout === 'grid' ? (
-                                    // MODO GRID (Existente)
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                    // MODO GRID — cover-only, info no hover
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-3">
                                         {currentItems.map((doc, index) => {
                                             const isInMyList = myListIds.has(doc.id);
                                             const myListItem = myListData[doc.id];
                                             const coverUrl = `${api.defaults.baseURL}/documents/${doc.id}/cover`;
-                                            const delayStyle = { animationDelay: `${index * 50}ms` };
+                                            const delayStyle = { animationDelay: `${index * 40}ms` };
 
                                             return (
-                                                <div 
-                                                    key={doc.id} 
-                                                    className={`bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all border border-gray-100 flex flex-col h-full group animate-fade-in-up`}
+                                                <div
+                                                    key={doc.id}
+                                                    className="relative group animate-fade-in-up"
                                                     style={delayStyle}
                                                 >
-
-                                                    {/* CONTAINER DA CAPA */}
-                                                    <div className="h-36 sm:h-40 md:h-44 lg:h-48 relative overflow-hidden rounded-t-2xl bg-gray-200 flex items-center justify-center shadow-inner">
-                                                        <img 
-                                                            src={coverUrl} 
+                                                    {/* CAPA com overflow-hidden para clip */}
+                                                    <div
+                                                        className="aspect-[2/3] overflow-hidden rounded-xl relative shadow-sm group-hover:shadow-xl transition-shadow duration-300 cursor-pointer bg-gray-200"
+                                                        onClick={() => handleRead(doc.id)}
+                                                    >
+                                                        <img
+                                                            src={coverUrl}
                                                             alt={doc.titulo}
-                                                            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                                                            onError={(e) => { 
-                                                                e.target.style.display = 'none'; 
+                                                            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                                                            onError={(e) => {
+                                                                e.target.style.display = 'none';
                                                                 e.target.nextSibling.classList.remove('hidden');
                                                                 e.target.nextSibling.classList.add('flex');
                                                             }}
                                                         />
-                                                        
-                                                        {/* Fallback (Gradiente) */}
-                                                        <div className={`hidden absolute inset-0 bg-gradient-to-br ${getGradient(doc.id)} items-center justify-center p-6 text-center`}>
-                                                            <h3 className="text-white font-bold text-lg drop-shadow-md leading-tight">
-                                                                {doc.titulo}
-                                                            </h3>
+
+                                                        {/* Fallback gradiente */}
+                                                        <div className={`hidden absolute inset-0 bg-gradient-to-br ${getGradient(doc.id)} items-center justify-center p-3 text-center`}>
+                                                            <h3 className="text-white font-bold text-sm drop-shadow leading-tight">{doc.titulo}</h3>
                                                         </div>
 
-                                                        <div className="absolute top-4 right-4 bg-white/20 backdrop-blur-sm p-2 rounded-lg text-white z-10">
-                                                            <BookOpen size={20} />
-                                                        </div>
-                                                    </div>
+                                                        {/* Hover overlay */}
+                                                        <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/55 to-black/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-2.5">
+                                                            <h3 className="text-white font-bold text-xs leading-tight line-clamp-2 mb-0.5">{doc.titulo}</h3>
+                                                            <p className="text-gray-300 text-xs mb-1.5 line-clamp-1">{doc.autor || 'Autor Desconhecido'}</p>
 
-                                                    {/* INFO DO LIVRO */}
-                                                    <div className="p-5 flex-1 flex flex-col">
-                                                        <h3 className="font-bold text-gray-900 mb-2 line-clamp-1">{doc.titulo}</h3>
-                                                        <div className="flex items-center gap-2 mb-3">
-                                                            <User size={14} className="text-blue-500" />
-                                                            <p className="text-sm font-medium text-gray-700 line-clamp-1">{doc.autor || "Autor Desconhecido"}</p>
-                                                        </div>
-                                                        
-                                                        {/* Barra de Progresso (Apenas se estiver na lista) */}
-                                                        {isInMyList && myListItem && myListItem.current_page > 0 && (
-                                                            <div className="mb-3">
-                                                                <div className="flex justify-between text-xs text-gray-500 mb-1">
-                                                                    <span>Progresso</span>
-                                                                    <span className="font-medium">
-                                                                        {myListItem.total_pages && myListItem.total_pages > 0 
-                                                                            ? `${Math.round((myListItem.current_page / myListItem.total_pages) * 100)}% (${myListItem.current_page}/${myListItem.total_pages})` 
-                                                                            : `Pág. ${myListItem.current_page}`}
+                                                            <div className="flex flex-wrap gap-1 mb-2">
+                                                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs bg-white/20 text-white">
+                                                                    <Calendar size={9} />{doc.ano || 'N/A'}
+                                                                </span>
+                                                                {doc.genero && (
+                                                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs bg-blue-500/70 text-white">
+                                                                        <Tag size={9} />{doc.genero}
                                                                     </span>
-                                                                </div>
-                                                                {myListItem.total_pages && myListItem.total_pages > 0 && (
-                                                                    <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
-                                                                        <div 
-                                                                            className="bg-blue-600 h-1.5 rounded-full transition-all duration-500" 
-                                                                            style={{ width: `${Math.min(100, Math.round((myListItem.current_page / myListItem.total_pages) * 100))}%` }}
-                                                                        ></div>
-                                                                    </div>
                                                                 )}
                                                             </div>
-                                                        )}
-                                                        
-                                                        <div className="flex flex-wrap gap-2 mb-6 mt-auto">
-                                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-800">
-                                                                <Calendar size={10} />{doc.ano || 'N/A'}
-                                                            </span>
-                                                            {doc.genero && (
-                                                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-50 text-blue-700">
-                                                                    <Tag size={10} />{doc.genero}
-                                                                </span>
-                                                            )}
-                                                        </div>
 
-                                                        {/* BOTÕES DE AÇÃO */}
-                                                        <div className="flex gap-2">
-                                                            {/* Botão Editar (apenas admin) */}
-                                                            {isAdmin && (
-                                                                <button 
-                                                                    onClick={() => navigate(`/edit-book/${doc.id}`)}
-                                                                    className={`${iconTooltipClass} h-10 w-10 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 border border-gray-300 transition flex items-center justify-center shadow-sm flex-shrink-0`}
-                                                                    aria-label="Editar livro"
-                                                                >
-                                                                    <Edit size={18} />
-                                                                    {renderTooltip("Editar livro")}
-                                                                </button>
+                                                            {/* Barra de progresso */}
+                                                            {isInMyList && myListItem && myListItem.current_page > 0 && myListItem.total_pages > 0 && (
+                                                                <div className="mb-2">
+                                                                    <div className="flex justify-between text-xs text-gray-400 mb-0.5">
+                                                                        <span>Progresso</span>
+                                                                        <span>{Math.round((myListItem.current_page / myListItem.total_pages) * 100)}%</span>
+                                                                    </div>
+                                                                    <div className="w-full bg-white/20 rounded-full h-1">
+                                                                        <div
+                                                                            className="bg-blue-400 h-1 rounded-full"
+                                                                            style={{ width: `${Math.min(100, Math.round((myListItem.current_page / myListItem.total_pages) * 100))}%` }}
+                                                                        />
+                                                                    </div>
+                                                                </div>
                                                             )}
 
-                                                            {renderCollectionMenu(doc.id)}
-                                                            
-                                                            {isInMyList ? (
-                                                                <>
-                                                                    <button 
-                                                                        onClick={() => handleRead(doc.id)} 
-                                                                        className={`${iconTooltipClass} h-10 w-10 flex items-center justify-center bg-green-50 text-green-700 rounded-lg font-semibold hover:bg-green-100 border border-green-200 transition shadow-sm flex-shrink-0`}
-                                                                        aria-label={myListItem.current_page > 1 ? 'Continuar leitura' : 'Ler'}
+                                                            {/* Botões de ação */}
+                                                            <div className="flex gap-1 mt-0.5" onClick={(e) => e.stopPropagation()}>
+                                                                {isAdmin && (
+                                                                    <button
+                                                                        onClick={(e) => { e.stopPropagation(); navigate(`/edit-book/${doc.id}`); }}
+                                                                        className="h-7 w-7 bg-white/20 text-white rounded-lg hover:bg-white/40 border border-white/20 transition flex items-center justify-center flex-shrink-0"
+                                                                        title="Editar"
                                                                     >
-                                                                        <BookOpen size={18} />
-                                                                        {renderTooltip(myListItem.current_page > 1 ? "Continuar leitura" : "Ler")}
+                                                                        <Edit size={12} />
                                                                     </button>
-                                                                    <button 
-                                                                        onClick={(e) => handleRemoveFromList(e, doc.id)}
+                                                                )}
+
+                                                                {/* Trigger da coleção */}
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); setCollectionMenuDocId(collectionMenuDocId === doc.id ? null : doc.id); }}
+                                                                    className="h-7 w-7 bg-white/20 text-white rounded-lg hover:bg-white/40 border border-white/20 transition flex items-center justify-center flex-shrink-0"
+                                                                    title="Coleção"
+                                                                >
+                                                                    <FolderPlus size={12} />
+                                                                </button>
+
+                                                                {isInMyList ? (
+                                                                    <>
+                                                                        <button
+                                                                            onClick={(e) => { e.stopPropagation(); handleRead(doc.id); }}
+                                                                            className="flex-1 h-7 flex items-center justify-center gap-1 bg-green-500/80 text-white rounded-lg hover:bg-green-500 transition text-xs font-semibold"
+                                                                        >
+                                                                            <BookOpen size={11} />
+                                                                            {myListItem?.current_page > 1 ? 'Continuar' : 'Ler'}
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={(e) => handleRemoveFromList(e, doc.id)}
+                                                                            disabled={actionLoading === doc.id}
+                                                                            className="h-7 w-7 bg-red-500/70 text-white rounded-lg hover:bg-red-500 transition flex items-center justify-center flex-shrink-0 disabled:opacity-50"
+                                                                        >
+                                                                            {actionLoading === doc.id ? <div className="animate-spin h-3 w-3 border-b-2 border-white rounded-full" /> : <Trash2 size={11} />}
+                                                                        </button>
+                                                                    </>
+                                                                ) : (
+                                                                    <button
+                                                                        onClick={(e) => handleAddToList(e, doc.id)}
                                                                         disabled={actionLoading === doc.id}
-                                                                        className={`${iconTooltipClass} h-10 w-10 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 border border-red-200 transition flex items-center justify-center shadow-sm disabled:opacity-50 flex-shrink-0`}
-                                                                        aria-label="Remover da lista"
+                                                                        className="flex-1 h-7 flex items-center justify-center gap-1 bg-blue-500/80 text-white rounded-lg hover:bg-blue-500 transition text-xs font-semibold disabled:opacity-50"
                                                                     >
-                                                                        {actionLoading === doc.id ? 
-                                                                            <div className="animate-spin h-4 w-4 border-b-2 border-red-600 rounded-full"></div> 
-                                                                            : <Trash2 size={18} />
+                                                                        {actionLoading === doc.id ?
+                                                                            <div className="animate-spin h-3 w-3 border-b-2 border-white rounded-full" />
+                                                                            : <><Plus size={11} /> Salvar</>
                                                                         }
-                                                                        {renderTooltip("Remover da lista")}
                                                                     </button>
-                                                                </>
-                                                            ) : (
-                                                                <button 
-                                                                    onClick={(e) => handleAddToList(e, doc.id)}
-                                                                    disabled={actionLoading === doc.id}
-                                                                    className={`${iconTooltipClass} h-10 w-10 flex items-center justify-center bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition shadow-md disabled:bg-blue-400 flex-shrink-0`}
-                                                                    aria-label="Adicionar aos meus livros"
-                                                                >
-                                                                    {actionLoading === doc.id ? 
-                                                                        <div className="animate-spin h-5 w-5 border-b-2 border-white rounded-full"></div> 
-                                                                        : <Plus size={18} />
-                                                                    }
-                                                                    {renderTooltip("Adicionar aos meus livros")}
-                                                                </button>
-                                                            )}
+                                                                )}
+                                                            </div>
                                                         </div>
                                                     </div>
+
+                                                    {/* Dropdown coleção — fora do overflow-hidden para não ser clipado */}
+                                                    {collectionMenuDocId === doc.id && (
+                                                        <div
+                                                            className="absolute bottom-2 left-0 w-64 bg-white border border-gray-200 rounded-lg shadow-xl z-50 p-3 text-left"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        >
+                                                            <div className="text-sm font-semibold text-gray-900 mb-2">Adicionar a coleção</div>
+                                                            <div className="max-h-36 overflow-y-auto space-y-1 mb-3">
+                                                                {collections.length === 0 ? (
+                                                                    <p className="text-xs text-gray-500 py-2">Nenhuma coleção criada.</p>
+                                                                ) : (
+                                                                    collections.map((collection) => {
+                                                                        const alreadyAdded = collection.book_ids?.includes(doc.id);
+                                                                        return (
+                                                                            <button
+                                                                                key={collection.id}
+                                                                                onClick={(e) => handleAddToCollection(e, collection.id, doc.id)}
+                                                                                disabled={alreadyAdded || collectionLoading === `${collection.id}-${doc.id}`}
+                                                                                className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-md text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-default"
+                                                                            >
+                                                                                <span className="truncate">{collection.nome}</span>
+                                                                                {alreadyAdded ? <Check size={16} className="text-green-600" /> : <Plus size={14} className="text-violet-600" />}
+                                                                            </button>
+                                                                        );
+                                                                    })
+                                                                )}
+                                                            </div>
+                                                            <div className="border-t border-gray-100 pt-3">
+                                                                <label className="block text-xs font-medium text-gray-600 mb-1">Nova coleção</label>
+                                                                <div className="flex gap-2">
+                                                                    <input
+                                                                        value={collectionName}
+                                                                        onChange={(e) => setCollectionName(e.target.value)}
+                                                                        onKeyDown={(e) => { if (e.key === 'Enter') handleCreateCollection(e, doc.id); }}
+                                                                        className="min-w-0 flex-1 border border-gray-200 rounded-md px-2 py-1.5 text-sm text-gray-900 focus:ring-2 focus:ring-violet-500 outline-none"
+                                                                        placeholder="Nome"
+                                                                    />
+                                                                    <button
+                                                                        onClick={(e) => handleCreateCollection(e, doc.id)}
+                                                                        disabled={!collectionName.trim() || collectionLoading === `new-${doc.id}`}
+                                                                        className="px-3 py-1.5 bg-violet-600 text-white rounded-md text-sm font-medium hover:bg-violet-700 disabled:bg-violet-300"
+                                                                    >
+                                                                        Criar
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             );
                                         })}

@@ -4,7 +4,8 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import {
     ArrowLeft, ZoomIn, ZoomOut, Bookmark, Maximize, Minimize,
     X, Languages, FileText, ChevronLeft, ChevronRight,
-    Columns, Square, PanelRightClose, PanelRightOpen, Bot, Volume2
+    Columns, Square, PanelRightClose, PanelRightOpen, Bot, Volume2,
+    Expand, Search
 } from 'lucide-react';
 
 import api from '../services/api';
@@ -31,6 +32,8 @@ const PDFReader = () => {
     const containerRef = useRef(null);
     const mainRef = useRef(null);
     const selectionTimeoutRef = useRef(null);
+    const isResettingRef = useRef(false);
+    const pdfDocRef = useRef(null);
 
     const { sidebarWidth, isResizing, startResizing } = useSidebarResizer(400);
     const {
@@ -42,17 +45,36 @@ const PDFReader = () => {
     const [pageNumber, setPageNumber] = useState(1);
     const [inputPage, setInputPage] = useState(1);
     const [numPages, setNumPages] = useState(null);
-    const [scale, setScale] = useState(window.innerWidth < 768 ? 0.6 : 1.2);
-    const [isDoublePage, setIsDoublePage] = useState(false);
+    const [scale, setScale] = useState(() => {
+        const savedScale = localStorage.getItem('pdf_scale');
+        return savedScale ? parseFloat(savedScale) : (window.innerWidth < 768 ? 0.6 : 1.2);
+    });
+    const [isDoublePage, setIsDoublePage] = useState(() => {
+        const savedDoublePage = localStorage.getItem('pdf_double_page');
+        return savedDoublePage === 'true';
+    });
+    const [fitToWidth, setFitToWidth] = useState(false);
     const [activeTab, setActiveTab] = useState('translation');
     const [translation, setTranslation] = useState("");
     const [loadingTranslation, setLoadingTranslation] = useState(false);
     const [selectionMenu, setSelectionMenu] = useState(null);
-    const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth >= 1024);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+        const savedSidebar = localStorage.getItem('pdf_sidebar');
+        if (savedSidebar === 'true') return true;
+        if (savedSidebar === 'false') return false;
+        return window.innerWidth >= 1024;
+    });
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [hasSelection, setHasSelection] = useState(false);
     const [readingStatus, setReadingStatus] = useState(null); // Estado para controlar se é 'lendo', 'concluido', etc.
     const [currentPageText, setCurrentPageText] = useState(''); // Texto da página atual para TTS
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchOpen, setSearchOpen] = useState(false);
+    const [searchResults, setSearchResults] = useState([]);
+    const [searchIdx, setSearchIdx] = useState(0);
+    const [searchLoading, setSearchLoading] = useState(false);
+    const [pdfError, setPdfError] = useState(false);
+    const [pageVisible, setPageVisible] = useState(true);
     const initializedRef = useRef(false);
     const selectionAudioRef = useRef(null);
 
@@ -81,6 +103,10 @@ const PDFReader = () => {
 
     // Salva a página atual sempre que ela mudar
     useEffect(() => {
+        if (isResettingRef.current) {
+            isResettingRef.current = false;
+            return;
+        }
         if (pageNumber && pageNumber > 0) {
             updateLastPage(pageNumber);
         }
@@ -88,9 +114,22 @@ const PDFReader = () => {
 
     // Resetar estado ao trocar de livro
     useEffect(() => {
+        isResettingRef.current = true;
         setPageNumber(1);
         initializedRef.current = false;
     }, [id]);
+
+    useEffect(() => {
+        localStorage.setItem('pdf_scale', scale);
+    }, [scale]);
+
+    useEffect(() => {
+        localStorage.setItem('pdf_sidebar', isSidebarOpen);
+    }, [isSidebarOpen]);
+
+    useEffect(() => {
+        localStorage.setItem('pdf_double_page', isDoublePage);
+    }, [isDoublePage]);
 
     // Extrai texto da página atual para TTS (lê do text layer do react-pdf)
     useEffect(() => {
@@ -156,6 +195,10 @@ const PDFReader = () => {
 
     useEffect(() => {
         setInputPage(pageNumber);
+        if (mainRef.current) mainRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+        setPageVisible(false);
+        const fadeTimer = setTimeout(() => setPageVisible(true), 150);
+        return () => clearTimeout(fadeTimer);
     }, [pageNumber]);
 
     // Monitora mudanças na seleção (funciona melhor em mobile/tablet com handles nativos)
@@ -294,35 +337,141 @@ const PDFReader = () => {
         }
     };
 
-    // Lógica de Swipe para Mobile
+    const handleFitToWidth = () => {
+        if (!mainRef.current) return;
+        const containerWidth = mainRef.current.clientWidth - 32;
+        const newScale = Math.round((containerWidth / 600) * 100) / 100;
+        setScale(Math.min(3.0, Math.max(0.3, newScale)));
+        setFitToWidth(true);
+    };
+
+    const handleSearch = async () => {
+        if (!searchQuery.trim() || !pdfDocRef.current) return;
+        setSearchLoading(true);
+        setSearchResults([]);
+        const results = [];
+
+        for (let p = 1; p <= pdfDocRef.current.numPages; p++) {
+            try {
+                const page = await pdfDocRef.current.getPage(p);
+                const content = await page.getTextContent();
+                const text = content.items.map(i => i.str).join(' ');
+                const q = searchQuery.toLowerCase();
+                const lowerText = text.toLowerCase();
+
+                if (lowerText.includes(q)) {
+                    const idx = lowerText.indexOf(q);
+                    const snippet = text.substring(Math.max(0, idx - 30), idx + q.length + 30);
+                    results.push({ page: p, snippet });
+                }
+            } catch {
+                // Ignora paginas que falharem na extracao de texto
+            }
+        }
+
+        setSearchResults(results);
+        setSearchIdx(0);
+        if (results.length > 0) setPageNumber(results[0].page);
+        setSearchLoading(false);
+    };
+
+    const goToSearchResult = (dir) => {
+        const next = (searchIdx + dir + searchResults.length) % searchResults.length;
+        setSearchIdx(next);
+        setPageNumber(searchResults[next].page);
+    };
+
+    // Desabilita zoom nativo do browser enquanto o PDFReader está montado
+    useEffect(() => {
+        const metaViewport = document.querySelector('meta[name="viewport"]');
+        const original = metaViewport?.getAttribute('content') ?? 'width=device-width, initial-scale=1.0';
+        metaViewport?.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+        return () => metaViewport?.setAttribute('content', original);
+    }, []);
+
+    // Refs para touch (swipe + pinch) — listeners nativos
     const touchStartX = useRef(null);
     const touchStartY = useRef(null);
+    const pinchStartDist = useRef(null);
+    const pinchStartScale = useRef(null);
+    const pinchCurrentRatio = useRef(1);
+    const scaleRef = useRef(scale);
+    useEffect(() => { scaleRef.current = scale; }, [scale]);
 
-    const handleTouchStart = (e) => {
-        touchStartX.current = e.changedTouches[0].clientX;
-        touchStartY.current = e.changedTouches[0].clientY;
-    };
+    useEffect(() => {
+        const el = mainRef.current;
+        if (!el) return;
 
-    const handleTouchEnd = (e) => {
-        if (touchStartX.current === null) return;
-        
-        const touchEndX = e.changedTouches[0].clientX;
-        const touchEndY = e.changedTouches[0].clientY;
-        
-        const diffX = touchStartX.current - touchEndX;
-        const diffY = touchStartY.current - touchEndY;
+        // O container do PDF dentro da main (primeiro filho do Document)
+        const getPdfContainer = () => el.querySelector('.react-pdf__Document');
+        const getPinchDist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
 
-        touchStartX.current = null;
-        touchStartY.current = null;
+        const onTouchStart = (e) => {
+            if (e.touches.length === 2) {
+                pinchStartDist.current = getPinchDist(e.touches);
+                pinchStartScale.current = scaleRef.current;
+                pinchCurrentRatio.current = 1;
+                touchStartX.current = null;
+                return;
+            }
+            touchStartX.current = e.changedTouches[0].clientX;
+            touchStartY.current = e.changedTouches[0].clientY;
+        };
 
-        if (window.getSelection().toString().length > 0) return; // Ignora se estiver selecionando texto
-        if (Math.abs(diffY) > Math.abs(diffX)) return; // Ignora scroll vertical
+        const onTouchMove = (e) => {
+            if (e.touches.length === 2 && pinchStartDist.current !== null) {
+                e.preventDefault();
+                const ratio = getPinchDist(e.touches) / pinchStartDist.current;
+                pinchCurrentRatio.current = ratio;
+                // Aplica transform CSS diretamente — sem re-render React
+                const pdfEl = getPdfContainer();
+                if (pdfEl) {
+                    pdfEl.style.transform = `scale(${ratio})`;
+                    pdfEl.style.transformOrigin = 'center top';
+                    pdfEl.style.transition = 'none';
+                }
+            }
+        };
 
-        if (Math.abs(diffX) > 50) {
-            if (diffX > 0) goToNextPage();
-            else goToPrevPage();
-        }
-    };
+        const onTouchEnd = (e) => {
+            if (pinchStartDist.current !== null) {
+                // Commita o zoom real — remove transform e re-renderiza PDF na escala correta
+                const pdfEl = getPdfContainer();
+                if (pdfEl) {
+                    pdfEl.style.transform = '';
+                    pdfEl.style.transition = '';
+                }
+                const finalScale = Math.min(3.0, Math.max(0.5,
+                    pinchStartScale.current * pinchCurrentRatio.current
+                ));
+                setScale(Math.round(finalScale * 100) / 100);
+                pinchStartDist.current = null;
+                pinchStartScale.current = null;
+                pinchCurrentRatio.current = 1;
+                return;
+            }
+            if (touchStartX.current === null) return;
+            const diffX = touchStartX.current - e.changedTouches[0].clientX;
+            const diffY = touchStartY.current - e.changedTouches[0].clientY;
+            touchStartX.current = null;
+            touchStartY.current = null;
+            if (window.getSelection().toString().length > 0) return;
+            if (Math.abs(diffY) > Math.abs(diffX)) return;
+            if (Math.abs(diffX) > 50) {
+                if (diffX > 0) goToNextPage();
+                else goToPrevPage();
+            }
+        };
+
+        el.addEventListener('touchstart', onTouchStart, { passive: true });
+        el.addEventListener('touchmove', onTouchMove, { passive: false });
+        el.addEventListener('touchend', onTouchEnd, { passive: true });
+        return () => {
+            el.removeEventListener('touchstart', onTouchStart);
+            el.removeEventListener('touchmove', onTouchMove);
+            el.removeEventListener('touchend', onTouchEnd);
+        };
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const renderHighlightLayer = (pNum) => (
         <div className="absolute inset-0 pointer-events-none z-10">
@@ -343,7 +492,7 @@ const PDFReader = () => {
         <div ref={containerRef} className="flex h-screen bg-gray-900 text-gray-100 overflow-hidden select-none">
             
             {selectionMenu && (
-                <div className="fixed bg-white shadow-2xl rounded-full p-2 flex gap-2 border border-gray-200 z-[60]" style={{ left: Math.max(60, Math.min(window.innerWidth - 60, selectionMenu.x)), top: selectionMenu.y, transform: 'translate(-50%, -100%)' }}>
+                <div className="fixed bg-white shadow-2xl rounded-full p-2 flex gap-2 border border-gray-200 z-[60]" style={{ left: Math.max(60, Math.min(window.innerWidth - 60, selectionMenu.x)), top: Math.max(70, selectionMenu.y), transform: 'translate(-50%, -100%)' }}>
                     {HIGHLIGHT_COLORS.map(color => (
                         <button key={color.id} onClick={() => applyHighlight(color.hex, pageNumber)} className="w-8 h-8 md:w-8 md:h-8 rounded-full border border-gray-300 hover:scale-110 transition shadow-sm flex-shrink-0" style={{ backgroundColor: color.hex }} />
                     ))}
@@ -384,28 +533,34 @@ const PDFReader = () => {
                     >
                         {isDoublePage ? <Columns size={18} /> : <Square size={18} />}
                     </button>
+                    <button
+                        onClick={() => setSearchOpen(!searchOpen)}
+                        className={`p-2 hover:bg-gray-700 rounded-lg transition ${searchOpen ? 'bg-blue-600 text-white' : ''}`}
+                    >
+                        <Search size={18} />
+                    </button>
                 </div>
 
                 <div className="flex items-center gap-1 md:gap-4 bg-gray-900/50 px-2 py-1.5 rounded-full border border-gray-700">
                     <button onClick={goToPrevPage} disabled={pageNumber <= 1} className="p-1 hover:text-blue-400 disabled:opacity-30">
                         <ChevronLeft size={22} />
                     </button>
-                    <form onSubmit={handlePageSubmit} className="flex items-center justify-center gap-1">
-                        <input 
-                            type="number" 
-                            min={1} 
+                    <form onSubmit={handlePageSubmit} className="flex items-center justify-center gap-1 flex-nowrap whitespace-nowrap">
+                        <input
+                            type="number"
+                            min={1}
                             max={numPages || ''}
                             value={inputPage}
                             onChange={(e) => setInputPage(e.target.value)}
                             onBlur={handlePageSubmit}
-                            className="w-12 bg-transparent text-center text-sm font-mono focus:outline-none text-white appearance-none m-0 border-b border-transparent focus:border-blue-500 transition-colors p-0"
-                            style={{ 
-                                MozAppearance: 'textfield', 
+                            className="w-10 bg-transparent text-center text-sm font-mono focus:outline-none text-white appearance-none m-0 border-b border-transparent focus:border-blue-500 transition-colors p-0 flex-shrink-0"
+                            style={{
+                                MozAppearance: 'textfield',
                                 WebkitAppearance: 'none',
-                                backgroundColor: 'transparent' 
+                                backgroundColor: 'transparent'
                             }}
                         />
-                        <span className="text-sm font-mono text-gray-400 select-none">/ {numPages || '--'}</span>
+                        <span className="text-sm font-mono text-gray-400 select-none flex-shrink-0 whitespace-nowrap">/ {numPages || '--'}</span>
                     </form>
                     <button onClick={goToNextPage} disabled={pageNumber >= numPages} className="p-1 hover:text-blue-400 disabled:opacity-30">
                         <ChevronRight size={22} />
@@ -413,9 +568,10 @@ const PDFReader = () => {
                 </div>
 
                 <div className="flex items-center gap-1 md:gap-2">
-                    <div className="flex items-center gap-1 bg-gray-900 rounded-lg px-1 md:px-2">
-                        <button onClick={() => setScale(s => Math.max(0.3, s - 0.2))} className="p-1.5 hover:text-blue-400"><ZoomOut size={16} /></button>
-                        <button onClick={() => setScale(s => Math.min(3.0, s + 0.1))} className="p-1.5 hover:text-blue-400"><ZoomIn size={16} /></button>
+                    <div className="hidden sm:flex items-center gap-1 bg-gray-900 rounded-lg px-1 md:px-2">
+                        <button onClick={() => { setScale(s => Math.max(0.3, s - 0.15)); setFitToWidth(false); }} className="p-1.5 hover:text-blue-400"><ZoomOut size={16} /></button>
+                        <button onClick={() => { setScale(s => Math.min(3.0, s + 0.15)); setFitToWidth(false); }} className="p-1.5 hover:text-blue-400"><ZoomIn size={16} /></button>
+                        <button onClick={handleFitToWidth} className={`hidden sm:flex p-1.5 hover:text-blue-400 text-xs font-mono ${fitToWidth ? 'text-blue-400' : ''}`} title="Ajustar largura"><Expand size={16} /></button>
                     </div>
                     <button onClick={() => toggleBookmark(pageNumber)} className={`p-2 transition ${bookmarks.includes(pageNumber) ? 'text-yellow-400' : 'text-gray-400'}`}>
                         <Bookmark size={20} fill={bookmarks.includes(pageNumber) ? "currentColor" : "none"} />
@@ -431,21 +587,62 @@ const PDFReader = () => {
                 </div>
             </header>
 
-            <div className="flex w-full h-full pt-14">
-                <main ref={mainRef} className={`flex-1 bg-gray-600 overflow-auto p-4 flex justify-center select-text transition-all ${isResizing ? 'pointer-events-none' : ''} ${hasSelection ? 'selection-active' : ''}`} 
+            {searchOpen && (
+                <div className="fixed top-14 left-0 right-0 z-40 bg-gray-800 border-b border-gray-700 px-4 py-2">
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSearch();
+                            }}
+                            placeholder="Buscar no documento..."
+                            className="flex-1 bg-gray-700 text-white px-3 py-1.5 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <button onClick={handleSearch} disabled={searchLoading} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50">
+                            Buscar
+                        </button>
+                        {searchLoading && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400" />}
+                        {searchResults.length > 0 && !searchLoading && (
+                            <>
+                                <span className="text-gray-400 text-sm">{searchIdx + 1} / {searchResults.length}</span>
+                                <button onClick={() => goToSearchResult(-1)} className="p-1 text-gray-400 hover:text-white"><ChevronLeft size={16} /></button>
+                                <button onClick={() => goToSearchResult(1)} className="p-1 text-gray-400 hover:text-white"><ChevronRight size={16} /></button>
+                            </>
+                        )}
+                        {searchResults.length === 0 && !searchLoading && searchQuery !== '' && (
+                            <span className="text-gray-500 text-sm">Nenhum resultado</span>
+                        )}
+                        <button onClick={() => setSearchOpen(false)} className="p-1 text-gray-400 hover:text-white"><X size={16} /></button>
+                    </div>
+                </div>
+            )}
+
+            <div className={`flex w-full h-full ${searchOpen ? 'pt-28' : 'pt-14'}`}>
+                <main ref={mainRef} className={`flex-1 bg-gray-600 overflow-auto p-4 flex justify-center select-text transition-all ${isResizing ? 'pointer-events-none' : ''} ${hasSelection ? 'selection-active' : ''}`}
+                      style={{ touchAction: 'pan-y' }}
                       onScroll={() => setSelectionMenu(null)}
-                      onContextMenu={(e) => e.preventDefault()}
-                      onTouchStart={handleTouchStart}
-                      onTouchEnd={handleTouchEnd}>
+                      onContextMenu={(e) => e.preventDefault()}>
+                    {pdfError ? (
+                        <div className="flex flex-col items-center justify-center h-full gap-4">
+                            <p className="text-gray-300">Erro ao carregar o PDF. Tente reabrir o documento.</p>
+                            <button onClick={() => setPdfError(false)} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                Tentar novamente
+                            </button>
+                        </div>
+                    ) : (
                     <Document
                         file={pdfFile}
-                        onLoadSuccess={({ numPages, _pdfInfo }) => {
-                            setNumPages(numPages);
-                            updateTotalPages(numPages); // Salva o total de páginas no JSON de anotações
+                        onLoadSuccess={(pdf) => {
+                            setNumPages(pdf.numPages);
+                            updateTotalPages(pdf.numPages); // Salva o total de páginas no JSON de anotações
+                            pdfDocRef.current = pdf;
                         }}
+                        onLoadError={(error) => { console.error('PDF load error:', error); setPdfError(true); }}
                         loading={<div className="text-white mt-20 font-medium">A carregar biblioteca...</div>}
                     >
-                        <div className={`flex gap-4 ${isDoublePage ? 'max-w-none' : 'max-w-4xl'}`}>
+                        <div className={`flex gap-4 ${isDoublePage ? 'max-w-none' : 'max-w-4xl'}`} style={{ opacity: pageVisible ? 1 : 0, transition: 'opacity 0.2s ease-in' }}>
                             <div className="bg-white shadow-2xl relative">
                                 {renderHighlightLayer(pageNumber)}
                                 <Page pageNumber={pageNumber} scale={scale} renderTextLayer={true} renderAnnotationLayer={true} inputRef={(ref) => ref?.setAttribute('data-page-number', pageNumber)}/>
@@ -458,6 +655,7 @@ const PDFReader = () => {
                             )}
                         </div>
                     </Document>
+                    )}
                 </main>
 
                 {/* DIVISOR COM SUPORTE A TOUCH */}

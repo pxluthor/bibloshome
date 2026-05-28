@@ -1,47 +1,37 @@
 import os
-import shutil
+import logging
+from pathlib import PureWindowsPath
 
 import mysql.connector
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import or_
 from sqlmodel import Session, select
-
-load_dotenv()
 
 from auth import get_current_user
 from capas import gerar_capas_automaticas
 from database import get_session
 from models import Livro, Usuario
-from sync_livros import garantir_tabela, map_db_por_relativo, scan_pasta_livros
+from services import get_pdf_service, PDFService
+from sync_livros import (
+    garantir_tabela,
+    map_db_por_relativo,
+    normalizar_relativo,
+    resolver_escopo_subpasta,
+    scan_pasta_livros,
+)
 
+load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 HOST = os.getenv('HOST')
 USER = os.getenv('USER')
 PASSWORD = os.getenv('PASSWORD')
 DATABASE = os.getenv('DATABASE')
-PASTA_BIBLIOTECA = os.getenv('PASTA_BIBLIOTECA', r'E:\BIBLIOTECA')
-FOR_INSERT_DIR = os.getenv('FOR_INSERT_DIR', r'E:\for_insert')
-EXTENSOES_SUPORTADAS = ('.pdf', '.epub', '.azw')
+PASTA_BIBLIOTECA = os.getenv('PASTA_BIBLIOTECA', '/data/biblioteca')
 
-
-def verificar_admin(current_user: Usuario = Depends(get_current_user)) -> Usuario:
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail='Acesso restrito a administradores',
-        )
-    return current_user
-
-
-def abrir_conexao():
-    return mysql.connector.connect(
-        host=HOST,
-        user=USER,
-        password=PASSWORD,
-        database=DATABASE,
-    )
+router = APIRouter(prefix='/admin/bd', tags=['Admin BD'])
 
 
 class ScanRequest(BaseModel):
@@ -55,117 +45,171 @@ class SyncRequest(BaseModel):
 
 class MoveRequest(BaseModel):
     livro_id: int
-    pasta_destino: str = ''
+    pasta_destino: str
 
 
-router = APIRouter(
-    prefix='/admin/bd',
-    tags=['admin-bd'],
-    dependencies=[Depends(verificar_admin)],
-)
+def _get_conn():
+    return mysql.connector.connect(
+        host=HOST,
+        user=USER,
+        password=PASSWORD,
+        database=DATABASE,
+    )
 
 
-def _diagnostico_scan(subpasta: str = '') -> dict:
-    conn = abrir_conexao()
+def _require_admin(current_user: Usuario):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail='Acesso restrito a administradores')
+
+
+def _listar_subpastas(pasta_raiz: str) -> list[dict]:
+    if not os.path.isdir(pasta_raiz):
+        raise HTTPException(status_code=400, detail='PASTA_BIBLIOTECA nao encontrada')
+
+    result = [{'rel': '', 'depth': 0, 'nome': 'Raiz (todos)'}]
+    for raiz, dirs, _ in os.walk(pasta_raiz):
+        dirs.sort()
+        for nome_dir in dirs:
+            caminho_abs = os.path.join(raiz, nome_dir)
+            rel = os.path.relpath(caminho_abs, pasta_raiz)
+            rel_norm = normalizar_relativo(rel)
+            depth = rel_norm.count('/') + 1 if rel_norm else 1
+            result.append({'rel': rel_norm, 'depth': depth, 'nome': nome_dir})
+
+    return sorted(result, key=lambda x: x['rel'])
+
+
+def _scan_diff(cursor, subpasta: str):
+    garantir_tabela(cursor)
+    fs_map = scan_pasta_livros(PASTA_BIBLIOTECA, subpasta)
+    db_map = map_db_por_relativo(cursor, PASTA_BIBLIOTECA, subpasta)
+
+    fs_keys = set(fs_map.keys())
+    db_keys = set(db_map.keys())
+    para_inserir_keys = sorted(fs_keys - db_keys)
+    para_excluir_keys = sorted(db_keys - fs_keys)
+
+    para_inserir = [
+        {
+            'relativo': key,
+            'titulo': fs_map[key][0],
+            'area': fs_map[key][1],
+        }
+        for key in para_inserir_keys
+    ]
+    para_excluir = [
+        {
+            'id': db_map[key][0],
+            'relativo': key,
+            'titulo': db_map[key][2],
+            'area': db_map[key][3],
+        }
+        for key in para_excluir_keys
+    ]
+
+    return {
+        'fs_map': fs_map,
+        'db_map': db_map,
+        'fs_keys': fs_keys,
+        'db_keys': db_keys,
+        'para_inserir_keys': para_inserir_keys,
+        'para_excluir_keys': para_excluir_keys,
+        'para_inserir': para_inserir,
+        'para_excluir': para_excluir,
+    }
+
+
+def _resolver_caminho_atual(caminho: str) -> str:
+    if '\\' in caminho:
+        win_path = PureWindowsPath(caminho)
+        parts = list(win_path.parts)
+        if win_path.drive and len(parts) > 2:
+            return os.path.abspath(os.path.join(PASTA_BIBLIOTECA, *parts[2:]))
+        return os.path.abspath(os.path.join(PASTA_BIBLIOTECA, *parts))
+
+    if os.path.isabs(caminho):
+        return os.path.abspath(caminho)
+
+    return os.path.abspath(os.path.join(PASTA_BIBLIOTECA, caminho))
+
+
+def _resolver_pasta_destino(pasta_destino: str) -> str:
+    pasta_base_abs = os.path.abspath(PASTA_BIBLIOTECA)
+    destino = pasta_destino or ''
+    if os.path.isabs(destino):
+        pasta_destino_abs = os.path.abspath(destino)
+    else:
+        pasta_destino_abs = os.path.abspath(os.path.join(pasta_base_abs, destino))
+
+    try:
+        dentro_biblioteca = os.path.commonpath([pasta_base_abs, pasta_destino_abs]) == pasta_base_abs
+    except ValueError:
+        dentro_biblioteca = False
+
+    if not dentro_biblioteca:
+        raise HTTPException(status_code=400, detail='Pasta de destino fora da biblioteca')
+
+    return pasta_destino_abs
+
+
+@router.get('/folders')
+def listar_folders(current_user: Usuario = Depends(get_current_user)):
+    _require_admin(current_user)
+    return {'folders': _listar_subpastas(PASTA_BIBLIOTECA)}
+
+
+@router.post('/scan')
+def scan_bd(body: ScanRequest, current_user: Usuario = Depends(get_current_user)):
+    _require_admin(current_user)
+    conn = _get_conn()
     cursor = conn.cursor()
 
     try:
-        garantir_tabela(cursor)
-        fs_map = scan_pasta_livros(PASTA_BIBLIOTECA, subpasta_relativa=subpasta)
-        db_map = map_db_por_relativo(cursor, PASTA_BIBLIOTECA, subpasta_relativa=subpasta)
-
-        fs_keys = set(fs_map.keys())
-        db_keys = set(db_map.keys())
-
-        para_inserir_keys = sorted(fs_keys - db_keys)
-        para_excluir_keys = sorted(db_keys - fs_keys)
-
-        para_inserir = [
-            {
-                'relativo': key,
-                'titulo': fs_map[key][0],
-                'area': fs_map[key][1],
-                'caminho': fs_map[key][2],
-            }
-            for key in para_inserir_keys
-        ]
-        para_excluir = [
-            {
-                'id': db_map[key][0],
-                'relativo': key,
-                'titulo': db_map[key][2],
-                'area': db_map[key][3],
-                'caminho': db_map[key][1],
-            }
-            for key in para_excluir_keys
-        ]
-
+        diff = _scan_diff(cursor, body.subpasta)
         return {
-            'escopo': subpasta or '(raiz completa)',
-            'total_pasta': len(fs_keys),
-            'total_banco': len(db_keys),
-            'total_inserir': len(para_inserir),
-            'total_excluir': len(para_excluir),
-            'para_inserir': para_inserir,
-            'para_excluir': para_excluir,
+            'escopo': body.subpasta or 'Raiz',
+            'total_pasta': len(diff['fs_keys']),
+            'total_banco': len(diff['db_keys']),
+            'total_inserir': len(diff['para_inserir_keys']),
+            'total_excluir': len(diff['para_excluir_keys']),
+            'para_inserir': diff['para_inserir'],
+            'para_excluir': diff['para_excluir'],
         }
+    except (FileNotFoundError, ValueError) as exc:
+        logger.warning('Falha ao escanear biblioteca: %s', exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         cursor.close()
         conn.close()
 
 
-@router.get('/folders')
-def listar_pastas():
-    if not os.path.isdir(PASTA_BIBLIOTECA):
-        raise HTTPException(status_code=400, detail='PASTA_BIBLIOTECA nao encontrada')
-
-    pastas = []
-    for raiz, dirs, _ in os.walk(PASTA_BIBLIOTECA):
-        dirs.sort()
-        rel = os.path.relpath(raiz, PASTA_BIBLIOTECA)
-        if rel == '.':
-            continue
-
-        rel_norm = os.path.normpath(rel).replace('\\', '/')
-        pastas.append({
-            'rel': rel_norm,
-            'depth': rel_norm.count('/'),
-            'nome': os.path.basename(rel_norm),
-        })
-
-    return sorted(pastas, key=lambda item: item['rel'])[:500]
-
-
-@router.post('/scan')
-def scan_bd(body: ScanRequest):
-    return _diagnostico_scan(body.subpasta)
-
-
 @router.post('/sync')
-def sincronizar_bd(body: SyncRequest):
-    diagnostico = _diagnostico_scan(body.subpasta)
-    conn = abrir_conexao()
+def sync_bd(body: SyncRequest, current_user: Usuario = Depends(get_current_user)):
+    _require_admin(current_user)
+    conn = _get_conn()
     cursor = conn.cursor()
 
     try:
+        diff = _scan_diff(cursor, body.subpasta)
+        antes_banco = len(diff['db_keys'])
+
+        ids_para_excluir = [diff['db_map'][key][0] for key in diff['para_excluir_keys']]
+        registros_para_inserir = [diff['fs_map'][key] for key in diff['para_inserir_keys']]
+
         excluidos = 0
         inseridos = 0
 
-        if diagnostico['para_excluir']:
-            ids = [(item['id'],) for item in diagnostico['para_excluir']]
-            cursor.executemany('DELETE FROM listaleitura WHERE livro_id = %s', ids)
-            cursor.executemany('DELETE FROM anotacoes WHERE livro_id = %s', ids)
-            cursor.executemany('DELETE FROM livros WHERE id = %s', ids)
+        if ids_para_excluir:
+            ids_payload = [(item_id,) for item_id in ids_para_excluir]
+            cursor.executemany('DELETE FROM listaleitura WHERE livro_id = %s', ids_payload)
+            cursor.executemany('DELETE FROM anotacoes WHERE livro_id = %s', ids_payload)
+            cursor.executemany('DELETE FROM livros WHERE id = %s', ids_payload)
             excluidos = cursor.rowcount
 
-        if diagnostico['para_inserir']:
-            payload = [
-                (item['titulo'], item['area'], item['caminho'])
-                for item in diagnostico['para_inserir']
-            ]
+        if registros_para_inserir:
             cursor.executemany(
                 'INSERT INTO livros (titulo, area, caminho) VALUES (%s, %s, %s)',
-                payload,
+                registros_para_inserir,
             )
             inseridos = cursor.rowcount
 
@@ -174,15 +218,20 @@ def sincronizar_bd(body: SyncRequest):
         resultado = {
             'excluidos': excluidos,
             'inseridos': inseridos,
-            'antes_banco': diagnostico['total_banco'],
-            'depois_banco': diagnostico['total_banco'] - diagnostico['total_excluir'] + diagnostico['total_inserir'],
+            'antes_banco': antes_banco,
+            'depois_banco': antes_banco - len(ids_para_excluir) + len(registros_para_inserir),
         }
         if body.gerar_capas:
             resultado['capas'] = gerar_capas_automaticas()
 
         return resultado
+    except (FileNotFoundError, ValueError) as exc:
+        conn.rollback()
+        logger.warning('Falha ao sincronizar biblioteca: %s', exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception:
         conn.rollback()
+        logger.exception('Falha inesperada ao sincronizar biblioteca')
         raise
     finally:
         cursor.close()
@@ -190,15 +239,21 @@ def sincronizar_bd(body: SyncRequest):
 
 
 @router.post('/generate-covers')
-def gerar_capas():
+def generate_covers(current_user: Usuario = Depends(get_current_user)):
+    _require_admin(current_user)
     return gerar_capas_automaticas()
 
 
 @router.get('/search-books')
-def buscar_livros(q: str = Query('', min_length=1), session: Session = Depends(get_session)):
+def search_books(
+    q: str = Query(min_length=2),
+    session: Session = Depends(get_session),
+    current_user: Usuario = Depends(get_current_user),
+):
+    _require_admin(current_user)
     livros = session.exec(
         select(Livro)
-        .where(or_(Livro.titulo.ilike(f'%{q}%'), Livro.autor.ilike(f'%{q}%')))
+        .where(Livro.titulo.ilike(f'%{q}%'))
         .limit(20)
     ).all()
 
@@ -215,163 +270,48 @@ def buscar_livros(q: str = Query('', min_length=1), session: Session = Depends(g
 
 
 @router.post('/move')
-def mover_livro(body: MoveRequest, session: Session = Depends(get_session)):
+def move_book(
+    body: MoveRequest,
+    session: Session = Depends(get_session),
+    current_user: Usuario = Depends(get_current_user),
+):
+    _require_admin(current_user)
+
     livro = session.get(Livro, body.livro_id)
     if not livro:
         raise HTTPException(status_code=404, detail='Livro nao encontrado')
-
-    caminho_atual = livro.caminho
-    if not caminho_atual:
+    if not livro.caminho:
         raise HTTPException(status_code=400, detail='Livro sem caminho cadastrado')
 
-    if not os.path.isabs(caminho_atual):
-        caminho_atual = os.path.join(PASTA_BIBLIOTECA, caminho_atual)
-    caminho_atual = os.path.abspath(caminho_atual)
+    caminho_antigo = livro.caminho
+    caminho_atual = _resolver_caminho_atual(livro.caminho)
+    pasta_destino_abs = _resolver_pasta_destino(body.pasta_destino)
+    os.makedirs(pasta_destino_abs, exist_ok=True)
 
-    if not os.path.isfile(caminho_atual):
-        raise HTTPException(status_code=400, detail='Arquivo não encontrado no filesystem')
+    nome_arquivo = PureWindowsPath(livro.caminho).name if '\\' in livro.caminho else os.path.basename(caminho_atual)
+    novo_caminho = os.path.join(pasta_destino_abs, nome_arquivo)
 
-    pasta_base_abs = os.path.abspath(PASTA_BIBLIOTECA)
-    pasta_destino_rel = body.pasta_destino or ''
-    pasta_destino_abs = os.path.abspath(os.path.join(pasta_base_abs, pasta_destino_rel))
+    if os.path.exists(caminho_atual):
+        try:
+            os.rename(caminho_atual, novo_caminho)
+        except OSError as exc:
+            logger.exception('Falha ao mover arquivo %s para %s', caminho_atual, novo_caminho)
+            raise HTTPException(status_code=500, detail=f'Falha ao mover arquivo: {exc}') from exc
+    else:
+        logger.warning('Arquivo nao encontrado no filesystem ao mover livro %s: %s', livro.id, caminho_atual)
 
-    try:
-        destino_dentro_da_biblioteca = os.path.commonpath([pasta_base_abs, pasta_destino_abs]) == pasta_base_abs
-    except ValueError:
-        destino_dentro_da_biblioteca = False
+    rel_dir = os.path.relpath(os.path.dirname(novo_caminho), PASTA_BIBLIOTECA)
+    area_nova = rel_dir.replace(os.sep, ' / ') if rel_dir != '.' else ''
 
-    if not destino_dentro_da_biblioteca:
-        raise HTTPException(status_code=400, detail='Pasta de destino fora da biblioteca')
-
-    if not os.path.isdir(pasta_destino_abs):
-        os.makedirs(pasta_destino_abs, exist_ok=True)
-
-    nome_arquivo = os.path.basename(caminho_atual)
-    novo_caminho_abs = os.path.join(pasta_destino_abs, nome_arquivo)
-
-    try:
-        shutil.move(caminho_atual, novo_caminho_abs)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f'Falha ao mover arquivo: {exc}') from exc
-
-    nova_area = ' / '.join(part for part in pasta_destino_rel.replace('\\', '/').split('/') if part) if pasta_destino_rel else ''
-    livro.caminho = novo_caminho_abs
-    livro.area = nova_area
+    livro.caminho = novo_caminho
+    livro.area = area_nova
     session.add(livro)
     session.commit()
     session.refresh(livro)
 
     return {
         'livro_id': livro.id,
-        'caminho_antigo': caminho_atual,
-        'caminho_novo': novo_caminho_abs,
-        'area_nova': nova_area,
-    }
-
-
-class InsertBookRequest(BaseModel):
-    caminho_origem: str          # caminho absoluto dentro de FOR_INSERT_DIR
-    pasta_destino: str = ''      # subpasta relativa a PASTA_BIBLIOTECA (vazio = raiz)
-    titulo: str
-    autor: str = ''
-    editora: str = ''
-    ano: int | None = None
-    paginas: int | None = None
-    genero: str = ''
-    idioma: str = ''
-    area: str = ''
-    sinopse: str = ''
-    mover_arquivo: bool = True   # mover para PASTA_BIBLIOTECA após inserir
-
-
-@router.get('/staging-files')
-def listar_staging():
-    """Lista arquivos na pasta de staging (FOR_INSERT_DIR)."""
-    if not os.path.isdir(FOR_INSERT_DIR):
-        raise HTTPException(status_code=400, detail=f'FOR_INSERT_DIR não encontrada: {FOR_INSERT_DIR}')
-
-    arquivos = []
-    for raiz, dirs, files in os.walk(FOR_INSERT_DIR):
-        dirs.sort()
-        for nome in sorted(files):
-            if not nome.lower().endswith(EXTENSOES_SUPORTADAS):
-                continue
-            caminho_abs = os.path.join(raiz, nome)
-            rel = os.path.relpath(caminho_abs, FOR_INSERT_DIR).replace('\\', '/')
-            try:
-                tamanho = os.path.getsize(caminho_abs)
-            except OSError:
-                tamanho = 0
-            arquivos.append({
-                'nome': nome,
-                'rel': rel,
-                'caminho_abs': caminho_abs,
-                'tamanho_mb': round(tamanho / 1_048_576, 2),
-                'ext': os.path.splitext(nome)[1].lower(),
-            })
-    return arquivos
-
-
-@router.post('/insert-book')
-def inserir_livro(body: InsertBookRequest, session: Session = Depends(get_session)):
-    """Insere livro no banco com todos os metadados e opcionalmente move o arquivo."""
-    # Validar que o arquivo está dentro de FOR_INSERT_DIR
-    caminho_abs = os.path.abspath(body.caminho_origem)
-    for_insert_abs = os.path.abspath(FOR_INSERT_DIR)
-    try:
-        dentro = os.path.commonpath([for_insert_abs, caminho_abs]) == for_insert_abs
-    except ValueError:
-        dentro = False
-    if not dentro:
-        raise HTTPException(status_code=400, detail='Arquivo fora de FOR_INSERT_DIR')
-    if not os.path.isfile(caminho_abs):
-        raise HTTPException(status_code=400, detail='Arquivo não encontrado')
-
-    caminho_final = caminho_abs
-
-    # Mover para PASTA_BIBLIOTECA se solicitado
-    if body.mover_arquivo:
-        pasta_base = os.path.abspath(PASTA_BIBLIOTECA)
-        dest_rel = body.pasta_destino or ''
-        pasta_dest_abs = os.path.abspath(os.path.join(pasta_base, dest_rel))
-        try:
-            dentro_bib = os.path.commonpath([pasta_base, pasta_dest_abs]) == pasta_base
-        except ValueError:
-            dentro_bib = False
-        if not dentro_bib:
-            raise HTTPException(status_code=400, detail='Pasta de destino fora da biblioteca')
-        os.makedirs(pasta_dest_abs, exist_ok=True)
-        novo_caminho = os.path.join(pasta_dest_abs, os.path.basename(caminho_abs))
-        try:
-            shutil.move(caminho_abs, novo_caminho)
-            caminho_final = novo_caminho
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f'Erro ao mover arquivo: {exc}') from exc
-
-    # Calcular área a partir da pasta_destino se não informada
-    area = body.area
-    if not area and body.pasta_destino:
-        area = ' / '.join(p for p in body.pasta_destino.replace('\\', '/').split('/') if p)
-
-    livro = Livro(
-        titulo=body.titulo or None,
-        autor=body.autor or None,
-        editora=body.editora or None,
-        ano=body.ano,
-        paginas=body.paginas,
-        genero=body.genero or None,
-        idioma=body.idioma or None,
-        area=area or None,
-        sinopse=body.sinopse or None,
-        caminho=caminho_final,
-    )
-    session.add(livro)
-    session.commit()
-    session.refresh(livro)
-
-    return {
-        'id': livro.id,
-        'titulo': livro.titulo,
-        'caminho': livro.caminho,
-        'area': livro.area,
+        'caminho_antigo': caminho_antigo,
+        'caminho_novo': novo_caminho,
+        'area_nova': area_nova,
     }

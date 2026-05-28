@@ -1,17 +1,20 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
     Bot, Send, FileText, Volume2, Loader2, AlertCircle,
-    CheckCircle, RefreshCw, Settings, Mic, MicOff, Play, Pause, Square
+    CheckCircle, RefreshCw, Settings, Mic, MicOff, Play, Pause, Square,
+    GraduationCap, ExternalLink
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
+import { toast } from '../../utils/toast';
 
 // ─── SUB-ABA: CHAT ────────────────────────────────────────────────────────────
 const ChatSubTab = ({ livroId }) => {
+    const navigate = useNavigate();
     const [status, setStatus] = useState(null); // null | {status, pages_indexed}
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
-    const [indexing, setIndexing] = useState(false);
     const bottomRef = useRef(null);
 
     const fetchStatus = useCallback(async () => {
@@ -41,18 +44,6 @@ const ChatSubTab = ({ livroId }) => {
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
-
-    const triggerIndex = async () => {
-        setIndexing(true);
-        try {
-            await api.post(`/ai/chat/${livroId}/index`);
-            setStatus({ status: 'indexing', pages_indexed: 0 });
-        } catch (e) {
-            alert('Erro ao iniciar indexação');
-        } finally {
-            setIndexing(false);
-        }
-    };
 
     const sendMessage = async () => {
         if (!input.trim() || loading) return;
@@ -136,38 +127,59 @@ const ChatSubTab = ({ livroId }) => {
     if (status.status === 'not_indexed' || status.status === 'error') {
         return (
             <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-4">
-                <Bot size={40} className="text-gray-300" />
-                <p className="text-sm text-gray-600 font-medium">
-                    {status.status === 'error'
-                        ? 'Erro na indexação. Tente novamente.'
-                        : 'Este livro ainda não foi indexado para chat.'}
+                <GraduationCap size={40} className="text-purple-300" />
+                <p className="text-sm text-gray-700 font-semibold">
+                    {status.status === 'error' ? 'Erro na indexação anterior.' : 'Este livro não está indexado.'}
                 </p>
-                <p className="text-xs text-gray-400">
-                    A indexação lê todas as páginas e cria uma base de busca semântica.
-                    Pode levar alguns minutos.
+                {status.status === 'error' && status.error_msg && (
+                    <div className="w-full bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-left">
+                        <p className="text-xs font-semibold text-red-600 mb-1 flex items-center gap-1">
+                            <AlertCircle size={12} /> Detalhe do erro:
+                        </p>
+                        <p className="text-xs text-red-700 font-mono break-all">{status.error_msg}</p>
+                    </div>
+                )}
+                <p className="text-xs text-gray-400 max-w-[200px]">
+                    Abra o Estúdio, selecione os capítulos e indexe — o chat ficará disponível aqui.
                 </p>
                 <button
-                    onClick={triggerIndex}
-                    disabled={indexing}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 transition"
+                    onClick={() => navigate(`/estudio/${livroId}`)}
+                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-xl text-sm font-semibold hover:bg-purple-700 transition"
                 >
-                    {indexing ? <Loader2 size={16} className="animate-spin" /> : <Bot size={16} />}
-                    Indexar Livro
+                    <GraduationCap size={16} />
+                    Abrir Estúdio
+                    <ExternalLink size={13} />
                 </button>
             </div>
         );
     }
 
     if (status.status === 'indexing') {
+        const pct = status.total_pages > 0
+            ? Math.round((status.pages_indexed / status.total_pages) * 100)
+            : null;
         return (
             <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-4">
                 <Loader2 size={40} className="text-blue-500 animate-spin" />
                 <p className="text-sm text-gray-700 font-semibold">Indexando livro…</p>
-                <p className="text-xs text-gray-400">
-                    {status.pages_indexed > 0
-                        ? `${status.pages_indexed} páginas processadas`
-                        : 'Iniciando…'}
-                </p>
+                {pct !== null ? (
+                    <div className="w-full max-w-xs">
+                        <div className="flex justify-between text-xs text-gray-500 mb-1">
+                            <span>{status.pages_indexed} / {status.total_pages} páginas</span>
+                            <span className="font-semibold">{pct}%</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+                            <div
+                                className="bg-blue-500 h-2.5 rounded-full transition-all duration-700"
+                                style={{ width: `${pct}%` }}
+                            />
+                        </div>
+                    </div>
+                ) : (
+                    <p className="text-xs text-gray-400">
+                        {status.pages_indexed > 0 ? `${status.pages_indexed} páginas processadas` : 'Iniciando…'}
+                    </p>
+                )}
                 <p className="text-xs text-gray-400">Esta aba atualizará automaticamente.</p>
             </div>
         );
@@ -176,9 +188,20 @@ const ChatSubTab = ({ livroId }) => {
     // status === 'ready'
     return (
         <div className="flex flex-col h-full">
-            <div className="text-xs text-green-600 flex items-center gap-1 mb-2 px-1">
-                <CheckCircle size={12} />
-                <span>{status.pages_indexed} páginas indexadas</span>
+            <div className="flex items-center justify-between mb-2 px-1">
+                <div className="text-xs text-green-600 flex items-center gap-1">
+                    <CheckCircle size={12} />
+                    <span>{status.pages_indexed} páginas indexadas</span>
+                </div>
+                <button
+                    onClick={() => navigate(`/estudio/${livroId}`)}
+                    className="flex items-center gap-1 text-xs text-purple-600 hover:text-purple-800 hover:bg-purple-50 px-2 py-1 rounded-lg transition font-semibold"
+                    title="Abrir Estúdio de Estudos"
+                >
+                    <GraduationCap size={13} />
+                    Estúdio
+                    <ExternalLink size={11} />
+                </button>
             </div>
 
             {/* Messages */}
@@ -563,7 +586,7 @@ const AISettingsPanel = ({ onClose }) => {
             await api.put('/ai/settings', form);
             onClose();
         } catch (e) {
-            alert('Erro ao salvar: ' + e.message);
+            toast.error('Erro ao salvar: ' + e.message);
         } finally {
             setSaving(false);
         }

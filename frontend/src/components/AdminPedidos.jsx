@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Shield, Clock, CheckCircle, XCircle, Search, Filter, User, Mail, Calendar, FileText, Check, X } from 'lucide-react';
 import api from '../services/api';
+import { toast } from '../utils/toast';
 
 const AdminPedidos = () => {
     const navigate = useNavigate();
@@ -22,7 +23,7 @@ const AdminPedidos = () => {
             setPedidos(response.data);
         } catch (error) {
             if (error.response?.status === 403) {
-                alert('Acesso negado. Apenas administradores podem acessar esta página.');
+                toast.error('Acesso negado. Apenas administradores podem acessar esta página.');
                 navigate('/');
             } else {
                 console.error('Erro ao buscar pedidos:', error);
@@ -45,7 +46,7 @@ const AdminPedidos = () => {
             ));
         } catch (error) {
             console.error('Erro ao atualizar status:', error);
-            alert('Erro ao atualizar status. Tente novamente.');
+            toast.error('Erro ao atualizar status. Tente novamente.');
         } finally {
             setUpdating(null);
         }

@@ -81,13 +81,34 @@ class OllamaProvider(AIProvider):
             yield response.json()["message"]["content"]
 
     async def embed(self, texts: list[str], model: str) -> list[list[float]]:
-        async with AsyncClient(timeout=httpx.Timeout(120.0)) as client:
-            response = await client.post(
-                f"{self.base_url}/api/embed",
-                json={"model": model, "input": texts},
-            )
-            response.raise_for_status()
-            return response.json()["embeddings"]
+        """Embed texts using Ollama. Tries the newer batch /api/embed endpoint first
+        (Ollama >= 0.3.6); falls back to the legacy /api/embeddings for older versions."""
+        timeout = httpx.Timeout(120.0)
+        async with AsyncClient(timeout=timeout) as client:
+            # ── Try new batch API (/api/embed, Ollama >= 0.3.6) ──────────────
+            try:
+                response = await client.post(
+                    f"{self.base_url}/api/embed",
+                    json={"model": model, "input": texts},
+                )
+                if response.status_code != 404:
+                    response.raise_for_status()
+                    return response.json()["embeddings"]
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 404:
+                    raise
+
+            # ── Fallback: legacy API (/api/embeddings, Ollama < 0.3.6) ──────
+            # Legacy endpoint only accepts one prompt at a time
+            embeddings = []
+            for text in texts:
+                r = await client.post(
+                    f"{self.base_url}/api/embeddings",
+                    json={"model": model, "prompt": text},
+                )
+                r.raise_for_status()
+                embeddings.append(r.json()["embedding"])
+            return embeddings
 
     async def list_models(self) -> list[str]:
         async with AsyncClient(timeout=httpx.Timeout(120.0)) as client:

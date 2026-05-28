@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ShoppingBag, Clock, CheckCircle, XCircle, Search, Trash2, Calendar, FileText, Plus, X } from 'lucide-react';
 import api from '../services/api';
+import { toast } from '../utils/toast';
 
 const MeusPedidos = () => {
     const navigate = useNavigate();
@@ -45,7 +46,7 @@ const MeusPedidos = () => {
             setPedidos(pedidos.filter(p => p.id !== pedidoId));
         } catch (error) {
             console.error('Erro ao cancelar pedido:', error);
-            alert('Erro ao cancelar pedido. Tente novamente.');
+            toast.error('Erro ao cancelar pedido. Tente novamente.');
         } finally {
             setDeleting(null);
         }
