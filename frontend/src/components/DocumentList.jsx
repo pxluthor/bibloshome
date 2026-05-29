@@ -53,22 +53,36 @@ function FolderNode({ node, selectedArea, onSelect, depth = 0 }) {
             <div
                 style={{ paddingLeft: depth * 16 + 8 }}
                 className={[
-                    'flex items-center gap-1.5 py-1 px-2 rounded-md cursor-pointer text-sm transition-colors',
+                    'flex items-center gap-1.5 py-1 px-2 rounded-md text-sm transition-colors',
                     isSelected ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-100'
                 ].join(' ')}
-                onClick={() => {
-                    if (hasChildren) setOpen(o => !o);
-                    onSelect(node.rel);
-                }}
             >
-                {hasChildren
-                    ? (open
-                        ? <FolderOpen size={14} className="text-yellow-500 flex-shrink-0" />
-                        : <Folder size={14} className="text-yellow-500 flex-shrink-0" />)
-                    : <Folder size={14} className="text-gray-400 flex-shrink-0" />}
-                <span className="truncate">{node.nome}</span>
+                {/* Ícone: clica para expandir/colapsar (apenas se tem filhos) */}
+                <span
+                    className="flex-shrink-0 cursor-pointer"
+                    onClick={() => hasChildren && setOpen(o => !o)}
+                >
+                    {hasChildren
+                        ? (open
+                            ? <FolderOpen size={14} className="text-yellow-500" />
+                            : <Folder size={14} className="text-yellow-500" />)
+                        : <Folder size={14} className="text-gray-400" />}
+                </span>
+                {/* Nome: clica para selecionar e buscar */}
+                <span
+                    className="truncate flex-1 cursor-pointer"
+                    onClick={() => onSelect(node.rel)}
+                >
+                    {node.nome}
+                </span>
+                {/* Chevron: clica para expandir/colapsar */}
                 {hasChildren && (
-                    <ChevronDown size={12} className={['ml-auto flex-shrink-0 transition-transform', open ? 'rotate-180' : ''].join(' ')} />
+                    <button
+                        onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+                        className="ml-auto flex-shrink-0 p-0.5 rounded hover:bg-black/10"
+                    >
+                        <ChevronDown size={12} className={['transition-transform', open ? 'rotate-180' : ''].join(' ')} />
+                    </button>
                 )}
             </div>
             {hasChildren && open && node.children.map(child => (
@@ -107,7 +121,10 @@ const DocumentList = () => {
     const [selectedGenre, setSelectedGenre] = useState(null);
     const [currentPage, setCurrentPage] = useState(1);
     const [isAnimating, setIsAnimating] = useState(false);
-    const itemsPerPage = 8;
+    const itemsPerPage = 24;
+    const [hasMore, setHasMore] = useState(false);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const sentinelRef = useRef(null);
 
     // --- ESTADOS DE CARREGAMENTO ---
     const [loading, setLoading] = useState(true);
@@ -130,26 +147,43 @@ const DocumentList = () => {
         fetchPedidosPendentes();
     }, []);
 
-    // Paginação server-side: re-fetch ao mudar página, gênero, area ou viewMode
+    // Filtros mudaram: re-fetch do zero (page 1, replace)
     useEffect(() => {
-        if (viewMode === 'all') fetchDocuments(currentPage, searchTerm, selectedGenre, selectedTag, selectedArea);
-    }, [currentPage, selectedGenre, selectedTag, selectedArea, viewMode]);
+        if (viewMode === 'all') fetchDocuments(1, searchTerm, selectedGenre, selectedTag, selectedArea, false);
+    }, [selectedGenre, selectedTag, selectedArea, viewMode]);
 
     // Debounce de busca: só dispara 400ms após parar de digitar
     useEffect(() => {
         if (viewMode !== 'all') return;
         clearTimeout(searchDebounceRef.current);
         searchDebounceRef.current = setTimeout(() => {
-            setCurrentPage(1);
-            fetchDocuments(1, searchTerm, selectedGenre, selectedTag, selectedArea);
+            fetchDocuments(1, searchTerm, selectedGenre, selectedTag, selectedArea, false);
         }, 400);
         return () => clearTimeout(searchDebounceRef.current);
     }, [searchTerm]);
 
-    // Resetar página ao trocar aba, gênero ou area
+    // Resetar página ao trocar aba
     useEffect(() => {
         setCurrentPage(1);
-    }, [viewMode, selectedGenre, selectedTag, selectedArea]);
+    }, [viewMode]);
+
+    // IntersectionObserver: carrega mais ao chegar no fim (apenas Acervo)
+    useEffect(() => {
+        if (viewMode !== 'all') return;
+        if (!sentinelRef.current) return;
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (entries[0].isIntersecting && hasMore && !isLoadingMore && !loading) {
+                    const nextPage = currentPage + 1;
+                    setCurrentPage(nextPage);
+                    fetchDocuments(nextPage, searchTerm, selectedGenre, selectedTag, selectedArea, true);
+                }
+            },
+            { threshold: 0.1 }
+        );
+        observer.observe(sentinelRef.current);
+        return () => observer.disconnect();
+    }, [hasMore, isLoadingMore, loading, currentPage, searchTerm, selectedGenre, selectedTag, selectedArea, viewMode]);
 
     const fetchInitialData = async () => {
         // Fase 1: conteudo principal — desbloqueia a UI o mais rapido possivel
@@ -215,21 +249,31 @@ const DocumentList = () => {
         }
     };
 
-    const fetchDocuments = async (page, search, genre, tag, area) => {
+    const fetchDocuments = async (page, search, genre, tag, area, append = false) => {
         try {
-            setLoading(true);
+            if (append) setIsLoadingMore(true);
+            else setLoading(true);
             const params = { page, limit: itemsPerPage };
             if (search) params.search = search;
             if (genre) params.genre = genre;
             if (tag) params.tag = tag;
             if (area) params.area = area;
             const response = await api.get('/documents', { params });
-            setDocuments(Array.isArray(response.data.items) ? response.data.items : []);
-            setTotalItems(response.data.total ?? 0);
+            const newItems = Array.isArray(response.data.items) ? response.data.items : [];
+            const total = response.data.total ?? 0;
+            if (append) {
+                setDocuments(prev => [...prev, ...newItems]);
+            } else {
+                setDocuments(newItems);
+                setCurrentPage(1);
+            }
+            setTotalItems(total);
+            setHasMore(page * itemsPerPage < total);
         } catch (error) {
             console.error("Erro ao buscar livros:", error);
         } finally {
             setLoading(false);
+            setIsLoadingMore(false);
         }
     };
 
@@ -1044,12 +1088,12 @@ const DocumentList = () => {
                             </div>
                         )}
 
-                        {/* PAGINAÇÃO */}
-                        {displayTotal > itemsPerPage && (
+                        {/* PAGINAÇÃO: client-side para Meus Livros */}
+                        {viewMode === 'my_list' && displayTotal > itemsPerPage && (
                             <div className="mt-10 flex justify-center items-center gap-4">
-                                <button 
-                                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} 
-                                    disabled={currentPage === 1} 
+                                <button
+                                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                                    disabled={currentPage === 1}
                                     className="p-2 rounded-lg border border-gray-300 disabled:opacity-30 hover:bg-white transition shadow-sm"
                                 >
                                     <ChevronLeft size={20} />
@@ -1057,13 +1101,25 @@ const DocumentList = () => {
                                 <div className="bg-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm">
                                     <span className="text-sm font-semibold text-gray-700">Página {currentPage} de {totalPages}</span>
                                 </div>
-                                <button 
-                                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} 
-                                    disabled={currentPage === totalPages} 
+                                <button
+                                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                                    disabled={currentPage === totalPages}
                                     className="p-2 rounded-lg border border-gray-300 disabled:opacity-30 hover:bg-white transition shadow-sm"
                                 >
                                     <ChevronRight size={20} />
                                 </button>
+                            </div>
+                        )}
+
+                        {/* INFINITE SCROLL SENTINEL: Acervo Completo */}
+                        {viewMode === 'all' && (
+                            <div ref={sentinelRef} className="mt-8 flex justify-center items-center h-10">
+                                {isLoadingMore && (
+                                    <div className="animate-spin h-6 w-6 border-2 border-blue-500 border-t-transparent rounded-full" />
+                                )}
+                                {!hasMore && documents.length > 0 && !loading && (
+                                    <p className="text-sm text-gray-400">Todos os {totalItems} livros carregados</p>
+                                )}
                             </div>
                         )}
                     </>
