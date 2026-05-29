@@ -191,6 +191,8 @@ const AdminBd = () => {
     const [syncConfirm, setSyncConfirm] = useState(false);
     const [syncing, setSyncing] = useState(false);
     const [syncResult, setSyncResult] = useState(null);
+    const [smartSyncing, setSmartSyncing] = useState(false);
+    const [smartSyncResult, setSmartSyncResult] = useState(null);
 
     const [coverLoading, setCoverLoading] = useState(false);
     const [coverResult, setCoverResult] = useState(null);
@@ -247,6 +249,23 @@ const AdminBd = () => {
             setError(getErrorMessage(err));
         } finally {
             setSyncing(false);
+        }
+    };
+
+    const handleSmartSync = async () => {
+        setSmartSyncing(true);
+        setSmartSyncResult(null);
+        setError('');
+        try {
+            const response = await api.post('/admin/bd/smart-sync', {
+                subpasta: syncFolder,
+                gerar_capas: syncGerCapas,
+            });
+            setSmartSyncResult(response.data);
+        } catch (err) {
+            setError(getErrorMessage(err));
+        } finally {
+            setSmartSyncing(false);
         }
     };
 
@@ -412,17 +431,78 @@ const AdminBd = () => {
                     Confirmo que quero aplicar alteracoes no banco
                 </label>
 
-                <button
-                    type="button"
-                    onClick={handleSync}
-                    disabled={!syncConfirm || syncing}
-                    className="flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                    {syncing && <Loader2 size={18} className="animate-spin" />}
-                    {syncing ? 'Sincronizando...' : 'Executar Sincronizacao'}
-                </button>
+                {/* Smart Sync — recomendado quando pastas foram reorganizadas */}
+                <div className="rounded-lg border border-green-200 bg-green-50 p-4 space-y-3">
+                    <div>
+                        <p className="text-sm font-semibold text-green-800">Smart Sync — Recomendado</p>
+                        <p className="text-xs text-green-700 mt-0.5">
+                            Compara por nome de arquivo antes de deletar. Livros que mudaram de pasta
+                            têm apenas o caminho atualizado — preservando capa, progresso e anotações.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={handleSmartSync}
+                        disabled={!syncConfirm || smartSyncing || syncing}
+                        className="flex items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-2 font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                        {smartSyncing && <Loader2 size={18} className="animate-spin" />}
+                        {smartSyncing ? 'Processando...' : 'Executar Smart Sync'}
+                    </button>
+                </div>
+
+                {/* Sync normal — destrutivo */}
+                <div className="rounded-lg border border-red-100 bg-red-50 p-4 space-y-3">
+                    <div>
+                        <p className="text-sm font-semibold text-red-800">Sync Normal — Destrutivo</p>
+                        <p className="text-xs text-red-700 mt-0.5">
+                            Deleta e reinseride livros que mudaram de pasta. Perde capas, progresso e anotações.
+                            Use apenas quando quiser reset completo.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={handleSync}
+                        disabled={!syncConfirm || syncing || smartSyncing}
+                        className="flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                        {syncing && <Loader2 size={18} className="animate-spin" />}
+                        {syncing ? 'Sincronizando...' : 'Executar Sync Normal'}
+                    </button>
+                </div>
             </div>
 
+            {/* Resultado Smart Sync */}
+            {smartSyncResult && (
+                <div className="rounded-xl border border-green-200 bg-white p-5 space-y-4">
+                    <h3 className="font-semibold text-green-800">Resultado Smart Sync</h3>
+                    <div className="grid grid-cols-3 gap-3">
+                        <div className="rounded-lg bg-green-50 p-3 text-center">
+                            <p className="text-2xl font-bold text-green-700">{smartSyncResult.atualizados}</p>
+                            <p className="text-xs text-green-600 mt-1">Atualizados (caminho)</p>
+                        </div>
+                        <div className="rounded-lg bg-blue-50 p-3 text-center">
+                            <p className="text-2xl font-bold text-blue-700">{smartSyncResult.inseridos}</p>
+                            <p className="text-xs text-blue-600 mt-1">Inseridos (novos)</p>
+                        </div>
+                        <div className="rounded-lg bg-red-50 p-3 text-center">
+                            <p className="text-2xl font-bold text-red-700">{smartSyncResult.excluidos}</p>
+                            <p className="text-xs text-red-600 mt-1">Excluídos (sumidos)</p>
+                        </div>
+                    </div>
+                    <p className="text-xs text-gray-500">
+                        De {smartSyncResult.total_para_excluir_original} registros para excluir e {smartSyncResult.total_para_inserir_original} para inserir detectados no diagnóstico,
+                        {' '}{smartSyncResult.atualizados} foram identificados como movidos e preservados.
+                    </p>
+                    {smartSyncResult.capas && (
+                        <div className="mt-2 text-xs text-gray-600">
+                            Capas: {smartSyncResult.capas.geradas} geradas / {smartSyncResult.capas.erros} erros
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Resultado Sync Normal */}
             {syncResult && (
                 <pre className="overflow-auto rounded-xl border bg-gray-900 p-4 text-sm text-gray-100">
                     {JSON.stringify(syncResult, null, 2)}

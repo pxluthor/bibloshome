@@ -241,6 +241,122 @@ def sync_bd(body: SyncRequest, current_user: Usuario = Depends(get_current_user)
         conn.close()
 
 
+@router.post('/smart-sync')
+def smart_sync_bd(body: SyncRequest, current_user: Usuario = Depends(get_current_user)):
+    """
+    Sync inteligente: compara por nome de arquivo antes de deletar.
+    - Livro que mudou de pasta → UPDATE caminho+area (preserva capa, progresso, anotacoes)
+    - Livro que sumiu do disco → DELETE
+    - Arquivo novo → INSERT
+    """
+    _require_admin(current_user)
+    conn = _get_conn()
+    cursor = conn.cursor()
+
+    try:
+        diff = _scan_diff(cursor, body.subpasta)
+        fs_map = diff['fs_map']
+        db_map = diff['db_map']
+        para_inserir_keys = diff['para_inserir_keys']
+        para_excluir_keys = diff['para_excluir_keys']
+
+        # Indexar "para inserir" por nome de arquivo (lowercase)
+        # fs_map[key] = (titulo/filename, area, caminho_abs)
+        inserir_por_nome: dict = {}
+        for key in para_inserir_keys:
+            nome = fs_map[key][0].lower()
+            if nome not in inserir_por_nome:
+                inserir_por_nome[nome] = key
+
+        # Indexar "para excluir" por nome de arquivo (lowercase)
+        # db_map[key] = (id, caminho, titulo, area)
+        excluir_por_nome: dict = {}
+        for key in para_excluir_keys:
+            titulo = (db_map[key][2] or '')
+            nome = os.path.basename(titulo).lower() if titulo else ''
+            if nome and nome not in excluir_por_nome:
+                excluir_por_nome[nome] = key
+
+        para_atualizar = []   # (new_caminho, new_area, id)
+        ids_para_deletar = []
+        registros_para_inserir = []
+        nomes_matched: set = set()
+
+        # Para cada livro que vai "sair" do banco:
+        for nome, excluir_key in excluir_por_nome.items():
+            id_livro = db_map[excluir_key][0]
+            if nome in inserir_por_nome:
+                # Achou o mesmo arquivo numa nova pasta → UPDATE
+                inserir_key = inserir_por_nome[nome]
+                new_filename, new_area, new_caminho = fs_map[inserir_key]
+                para_atualizar.append((new_caminho, new_area, id_livro))
+                nomes_matched.add(nome)
+            else:
+                # Arquivo realmente sumiu → DELETE
+                ids_para_deletar.append(id_livro)
+
+        # Arquivos novos que não casaram com nenhum "para excluir" → INSERT
+        for nome, inserir_key in inserir_por_nome.items():
+            if nome not in nomes_matched:
+                registros_para_inserir.append(fs_map[inserir_key])
+
+        # Executar UPDATEs
+        atualizados = 0
+        if para_atualizar:
+            cursor.executemany(
+                'UPDATE livros SET caminho = %s, area = %s WHERE id = %s',
+                para_atualizar,
+            )
+            atualizados = len(para_atualizar)
+
+        # Executar DELETEs (com FK cleanup)
+        excluidos = 0
+        if ids_para_deletar:
+            ids_payload = [(i,) for i in ids_para_deletar]
+            cursor.executemany('DELETE FROM listaleitura WHERE livro_id = %s', ids_payload)
+            cursor.executemany('DELETE FROM anotacoes WHERE livro_id = %s', ids_payload)
+            cursor.executemany('DELETE FROM estudio_artefatos WHERE livro_id = %s', ids_payload)
+            cursor.executemany('DELETE FROM colecoes_livros_itens WHERE livro_id = %s', ids_payload)
+            cursor.executemany('DELETE FROM livros_ia_status WHERE livro_id = %s', ids_payload)
+            cursor.executemany('DELETE FROM livros WHERE id = %s', ids_payload)
+            excluidos = len(ids_para_deletar)
+
+        # Executar INSERTs
+        inseridos = 0
+        if registros_para_inserir:
+            cursor.executemany(
+                'INSERT INTO livros (titulo, area, caminho) VALUES (%s, %s, %s)',
+                registros_para_inserir,
+            )
+            inseridos = len(registros_para_inserir)
+
+        conn.commit()
+
+        resultado = {
+            'atualizados': atualizados,
+            'excluidos': excluidos,
+            'inseridos': inseridos,
+            'total_para_inserir_original': len(para_inserir_keys),
+            'total_para_excluir_original': len(para_excluir_keys),
+        }
+        if body.gerar_capas:
+            resultado['capas'] = gerar_capas_automaticas()
+
+        return resultado
+
+    except (FileNotFoundError, ValueError) as exc:
+        conn.rollback()
+        logger.warning('Falha no smart-sync: %s', exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        conn.rollback()
+        logger.exception('Falha inesperada no smart-sync')
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+
+
 @router.post('/generate-covers')
 def generate_covers(current_user: Usuario = Depends(get_current_user)):
     _require_admin(current_user)
