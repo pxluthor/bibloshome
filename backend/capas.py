@@ -1,8 +1,10 @@
+import io
 import os
 from pathlib import PureWindowsPath
 
 import fitz  # PyMuPDF
 from dotenv import load_dotenv
+from PIL import Image
 from sqlmodel import Session, select
 
 from database import engine
@@ -28,6 +30,70 @@ def _resolver_caminho(caminho: str) -> str:
     if os.path.isabs(caminho):
         return caminho
     return os.path.abspath(os.path.join(PASTA_BIBLIOTECA, caminho))
+
+
+def _extrair_capa_epub(caminho: str) -> bytes | None:
+    """
+    Extrai a imagem de capa de um EPUB.
+    Tenta: (1) meta name=cover → item por ID,
+           (2) item com propriedade cover-image,
+           (3) primeiro item cujo nome contenha 'cover',
+           (4) primeira imagem do livro.
+    Converte para JPEG e redimensiona para max 400px de largura.
+    """
+    try:
+        from ebooklib import epub, ITEM_IMAGE  # import tardio — opcional
+        book = epub.read_epub(caminho, options={'ignore_ncx': True})
+
+        img_bytes: bytes | None = None
+
+        # 1) meta name="cover"
+        opf_meta = book.metadata.get('http://www.idpf.org/2007/opf', {}).get('meta', [])
+        for entry in opf_meta:
+            attrs = entry[1] if isinstance(entry, tuple) and len(entry) > 1 else {}
+            if isinstance(attrs, dict) and attrs.get('name') == 'cover':
+                item = book.get_item_with_id(attrs.get('content', ''))
+                if item:
+                    img_bytes = item.get_content()
+                    break
+
+        # 2) propriedade cover-image no manifest
+        if not img_bytes:
+            for item in book.get_items_of_type(ITEM_IMAGE):
+                props = getattr(item, 'properties', []) or []
+                if 'cover-image' in props:
+                    img_bytes = item.get_content()
+                    break
+
+        # 3) nome do arquivo contém "cover"
+        if not img_bytes:
+            for item in book.get_items_of_type(ITEM_IMAGE):
+                if 'cover' in item.get_name().lower():
+                    img_bytes = item.get_content()
+                    break
+
+        # 4) primeira imagem disponível
+        if not img_bytes:
+            for item in book.get_items_of_type(ITEM_IMAGE):
+                img_bytes = item.get_content()
+                break
+
+        if not img_bytes:
+            return None
+
+        # Converte para JPEG com resize proporcional (max 400px largura)
+        img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+        max_w = 400
+        if img.width > max_w:
+            ratio = max_w / img.width
+            img = img.resize((max_w, int(img.height * ratio)), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=80)
+        return buf.getvalue()
+
+    except Exception as exc:
+        print(f"Erro ao extrair capa EPUB {caminho}: {exc}")
+        return None
 
 
 def gerar_capas_automaticas(commit_lote: int = 200):
@@ -60,17 +126,24 @@ def gerar_capas_automaticas(commit_lote: int = 200):
                 erros += 1
                 continue
 
-            # Pipeline de capa atual: apenas PDF.
-            if os.path.splitext(caminho_completo)[1].lower() != ".pdf":
-                ignorados += 1
-                continue
+            ext = os.path.splitext(caminho_completo)[1].lower()
+            img_bytes: bytes | None = None
 
             try:
-                doc = fitz.open(caminho_completo)
-                pagina = doc.load_page(0)
-                pix = pagina.get_pixmap(matrix=fitz.Matrix(0.5, 0.5))
-                img_bytes = pix.tobytes("jpg")
-                doc.close()
+                if ext == '.pdf':
+                    doc = fitz.open(caminho_completo)
+                    pagina = doc.load_page(0)
+                    pix = pagina.get_pixmap(matrix=fitz.Matrix(0.5, 0.5))
+                    img_bytes = pix.tobytes("jpg")
+                    doc.close()
+                elif ext == '.epub':
+                    img_bytes = _extrair_capa_epub(caminho_completo)
+                    if img_bytes is None:
+                        ignorados += 1
+                        continue
+                else:
+                    ignorados += 1
+                    continue
 
                 livro.capa = img_bytes
                 session.add(livro)

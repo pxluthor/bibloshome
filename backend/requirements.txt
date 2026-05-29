@@ -15,3 +15,5 @@ openai
 chromadb
 pysqlite3-binary
 edge-tts
+ebooklib
+Pillow
