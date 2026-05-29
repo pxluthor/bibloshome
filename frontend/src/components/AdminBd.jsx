@@ -259,7 +259,7 @@ const AdminBd = () => {
         try {
             const response = await api.post('/admin/bd/smart-sync', {
                 subpasta: syncFolder,
-                gerar_capas: syncGerCapas,
+                gerar_capas: false, // capas sao geradas separadamente na aba Gerar Capas
             });
             setSmartSyncResult(response.data);
         } catch (err) {
@@ -274,7 +274,7 @@ const AdminBd = () => {
         setCoverResult(null);
         setError('');
         try {
-            const response = await api.post('/admin/bd/generate-covers');
+            const response = await api.post('/admin/bd/generate-covers', {}, { timeout: 300_000 });
             setCoverResult(response.data);
         } catch (err) {
             setError(getErrorMessage(err));
@@ -414,16 +414,6 @@ const AdminBd = () => {
                 <label className="flex items-center gap-2 text-sm text-gray-700">
                     <input
                         type="checkbox"
-                        checked={syncGerCapas}
-                        onChange={(e) => setSyncGerCapas(e.target.checked)}
-                        className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                    />
-                    Gerar capas ao final
-                </label>
-
-                <label className="flex items-center gap-2 text-sm text-gray-700">
-                    <input
-                        type="checkbox"
                         checked={syncConfirm}
                         onChange={(e) => setSyncConfirm(e.target.checked)}
                         className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
@@ -438,6 +428,7 @@ const AdminBd = () => {
                         <p className="text-xs text-green-700 mt-0.5">
                             Compara por nome de arquivo antes de deletar. Livros que mudaram de pasta
                             têm apenas o caminho atualizado — preservando capa, progresso e anotações.
+                            Para gerar capas dos livros novos, use a aba <strong>Gerar Capas</strong> após o sync.
                         </p>
                     </div>
                     <button
@@ -460,6 +451,15 @@ const AdminBd = () => {
                             Use apenas quando quiser reset completo.
                         </p>
                     </div>
+                    <label className="flex items-center gap-2 text-sm text-red-700">
+                        <input
+                            type="checkbox"
+                            checked={syncGerCapas}
+                            onChange={(e) => setSyncGerCapas(e.target.checked)}
+                            className="h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                        />
+                        Gerar capas ao final (pode demorar vários minutos)
+                    </label>
                     <button
                         type="button"
                         onClick={handleSync}
