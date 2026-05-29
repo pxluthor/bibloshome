@@ -274,12 +274,30 @@ const AdminBd = () => {
         setCoverResult(null);
         setError('');
         try {
-            const response = await api.post('/admin/bd/generate-covers', {}, { timeout: 300_000 });
-            setCoverResult(response.data);
+            await api.post('/admin/bd/generate-covers');
+            // Polling até a task terminar
+            const poll = async () => {
+                try {
+                    const res = await api.get('/admin/bd/generate-covers/status');
+                    if (res.data.status === 'running') {
+                        setTimeout(poll, 3000);
+                    } else {
+                        setCoverLoading(false);
+                        if (res.data.status === 'done') {
+                            setCoverResult(res.data.result);
+                        } else {
+                            setError(res.data.error || 'Erro ao gerar capas');
+                        }
+                    }
+                } catch (err) {
+                    setCoverLoading(false);
+                    setError(getErrorMessage(err));
+                }
+            };
+            setTimeout(poll, 3000);
         } catch (err) {
-            setError(getErrorMessage(err));
-        } finally {
             setCoverLoading(false);
+            setError(getErrorMessage(err));
         }
     };
 

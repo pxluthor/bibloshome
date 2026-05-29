@@ -1,5 +1,6 @@
 import os
 import logging
+import threading
 from pathlib import PureWindowsPath
 
 import mysql.connector
@@ -13,6 +14,9 @@ from capas import gerar_capas_automaticas
 from database import get_session
 from models import Livro, Usuario
 from services import get_pdf_service, PDFService
+
+# Estado da task de geração de capas (em memória, não persiste entre restarts)
+_covers_task: dict = {'status': 'idle', 'result': None, 'error': None}
 from sync_livros import (
     garantir_tabela,
     map_db_por_relativo,
@@ -357,10 +361,32 @@ def smart_sync_bd(body: SyncRequest, current_user: Usuario = Depends(get_current
         conn.close()
 
 
+def _run_covers_task():
+    global _covers_task
+    try:
+        result = gerar_capas_automaticas()
+        _covers_task = {'status': 'done', 'result': result, 'error': None}
+    except Exception as exc:
+        logger.exception('Falha na geração de capas em background')
+        _covers_task = {'status': 'error', 'result': None, 'error': str(exc)}
+
+
 @router.post('/generate-covers')
 def generate_covers(current_user: Usuario = Depends(get_current_user)):
+    global _covers_task
     _require_admin(current_user)
-    return gerar_capas_automaticas()
+    if _covers_task['status'] == 'running':
+        return {'status': 'running', 'message': 'Geração já em andamento'}
+    _covers_task = {'status': 'running', 'result': None, 'error': None}
+    thread = threading.Thread(target=_run_covers_task, daemon=True)
+    thread.start()
+    return {'status': 'running', 'message': 'Geração de capas iniciada em background'}
+
+
+@router.get('/generate-covers/status')
+def generate_covers_status(current_user: Usuario = Depends(get_current_user)):
+    _require_admin(current_user)
+    return _covers_task
 
 
 @router.get('/search-books')
