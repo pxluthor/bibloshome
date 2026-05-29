@@ -3,12 +3,80 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
     Search, BookOpen, Plus, Library,
     Calendar, User, Tag, ChevronLeft, ChevronRight,
-    Bookmark, Trash2, Filter, X, LayoutGrid, List, Edit, FolderPlus, Check, ChevronDown
+    Bookmark, Trash2, Filter, X, LayoutGrid, List, Edit, FolderPlus, Check, ChevronDown,
+    Folder, FolderOpen
 } from 'lucide-react';
 import api from '../services/api';
 import BookCardSkeleton from './BookCardSkeleton';
 import UserMenu from './UserMenu';
 import { toast } from '../utils/toast';
+
+// --- Cache localStorage para genres/tags (TTL 30 min) ---
+const _CACHE_TTL_MS = 30 * 60 * 1000;
+function getLocalCache(key) {
+    try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (Date.now() - parsed.ts < _CACHE_TTL_MS) return parsed.data;
+    } catch (_) {}
+    return null;
+}
+function setLocalCache(key, data) {
+    try { localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() })); } catch (_) {}
+}
+
+// --- Arvore de pastas ---
+function buildFolderTree(items) {
+    const map = {};
+    const roots = [];
+    items.forEach(item => { map[item.rel] = { ...item, children: [] }; });
+    items.forEach(item => {
+        if (!item.rel) return;
+        const lastSlash = item.rel.lastIndexOf(' / ');
+        const parentRel = lastSlash >= 0 ? item.rel.substring(0, lastSlash) : '';
+        if (parentRel && map[parentRel]) {
+            map[parentRel].children.push(map[item.rel]);
+        } else {
+            roots.push(map[item.rel]);
+        }
+    });
+    return roots;
+}
+
+function FolderNode({ node, selectedArea, onSelect, depth = 0 }) {
+    const [open, setOpen] = React.useState(false);
+    const hasChildren = node.children && node.children.length > 0;
+    const isSelected = selectedArea === node.rel;
+    return (
+        <div>
+            <div
+                style={{ paddingLeft: depth * 16 + 8 }}
+                className={[
+                    'flex items-center gap-1.5 py-1 px-2 rounded-md cursor-pointer text-sm transition-colors',
+                    isSelected ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-100'
+                ].join(' ')}
+                onClick={() => {
+                    if (hasChildren) setOpen(o => !o);
+                    onSelect(node.rel);
+                }}
+            >
+                {hasChildren
+                    ? (open
+                        ? <FolderOpen size={14} className="text-yellow-500 flex-shrink-0" />
+                        : <Folder size={14} className="text-yellow-500 flex-shrink-0" />)
+                    : <Folder size={14} className="text-gray-400 flex-shrink-0" />}
+                <span className="truncate">{node.nome}</span>
+                {hasChildren && (
+                    <ChevronDown size={12} className={['ml-auto flex-shrink-0 transition-transform', open ? 'rotate-180' : ''].join(' ')} />
+                )}
+            </div>
+            {hasChildren && open && node.children.map(child => (
+                <FolderNode key={child.rel} node={child} selectedArea={selectedArea} onSelect={onSelect} depth={depth + 1} />
+            ))}
+        </div>
+    );
+}
 
 const PREDEFINED_GENRES = [
     'Historia', 'Literatura', 'Ciencia e Tecnologia', 'Ciencias Sociais',
@@ -26,6 +94,8 @@ const DocumentList = () => {
     const [availableGenres, setAvailableGenres] = useState([]);
     const [availableTags, setAvailableTags] = useState([]);
     const [selectedTag, setSelectedTag] = useState(null);
+    const [selectedArea, setSelectedArea] = useState('');
+    const [folders, setFolders] = useState([]);
     const [totalItems, setTotalItems] = useState(0);
     const [filtersOpen, setFiltersOpen] = useState(false);
 
@@ -60,10 +130,10 @@ const DocumentList = () => {
         fetchPedidosPendentes();
     }, []);
 
-    // Paginação server-side: re-fetch ao mudar página, gênero ou viewMode
+    // Paginação server-side: re-fetch ao mudar página, gênero, area ou viewMode
     useEffect(() => {
-        if (viewMode === 'all') fetchDocuments(currentPage, searchTerm, selectedGenre, selectedTag);
-    }, [currentPage, selectedGenre, selectedTag, viewMode]);
+        if (viewMode === 'all') fetchDocuments(currentPage, searchTerm, selectedGenre, selectedTag, selectedArea);
+    }, [currentPage, selectedGenre, selectedTag, selectedArea, viewMode]);
 
     // Debounce de busca: só dispara 400ms após parar de digitar
     useEffect(() => {
@@ -71,25 +141,23 @@ const DocumentList = () => {
         clearTimeout(searchDebounceRef.current);
         searchDebounceRef.current = setTimeout(() => {
             setCurrentPage(1);
-            fetchDocuments(1, searchTerm, selectedGenre, selectedTag);
+            fetchDocuments(1, searchTerm, selectedGenre, selectedTag, selectedArea);
         }, 400);
         return () => clearTimeout(searchDebounceRef.current);
     }, [searchTerm]);
 
-    // Resetar página ao trocar aba ou gênero
+    // Resetar página ao trocar aba, gênero ou area
     useEffect(() => {
         setCurrentPage(1);
-    }, [viewMode, selectedGenre, selectedTag]);
+    }, [viewMode, selectedGenre, selectedTag, selectedArea]);
 
     const fetchInitialData = async () => {
+        // Fase 1: conteudo principal — desbloqueia a UI o mais rapido possivel
         try {
             setLoading(true);
-            const [docsResponse, myListResponse, collectionsResponse, genresResponse, tagsResponse] = await Promise.all([
+            const [docsResponse, myListResponse] = await Promise.all([
                 api.get('/documents', { params: { page: 1, limit: itemsPerPage } }),
                 api.get('/my-list').catch(() => ({ data: [] })),
-                api.get('/collections').catch(() => ({ data: [] })),
-                api.get('/documents/genres').catch(() => ({ data: [] })),
-                api.get('/documents/tags').catch(() => ({ data: [] }))
             ]);
 
             const docsData = docsResponse.data;
@@ -99,7 +167,6 @@ const DocumentList = () => {
             const ids = new Set();
             const listData = {};
             const listBooks = [];
-
             if (Array.isArray(myListResponse.data)) {
                 myListResponse.data.forEach(item => {
                     if (item.livro?.id) {
@@ -107,33 +174,55 @@ const DocumentList = () => {
                         listData[item.livro.id] = {
                             status: item.status,
                             current_page: item.current_page || 1,
-                            total_pages: item.total_pages
+                            total_pages: item.total_pages,
                         };
                         listBooks.push(item.livro);
                     }
                 });
             }
-
             setMyListIds(ids);
             setMyListData(listData);
             setMyListBooks(listBooks);
-            setCollections(Array.isArray(collectionsResponse.data) ? collectionsResponse.data : []);
-            setAvailableGenres(Array.isArray(genresResponse.data) ? genresResponse.data : []);
-            setAvailableTags(Array.isArray(tagsResponse.data) ? tagsResponse.data : []);
         } catch (error) {
             console.error("Erro ao buscar dados iniciais:", error);
         } finally {
             setLoading(false);
         }
+
+        // Fase 2: filtros e colecoes — carrega em background sem bloquear a UI
+        try {
+            const cachedGenres = getLocalCache('lib_genres');
+            const cachedTags = getLocalCache('lib_tags');
+
+            const [collectionsResponse, foldersResponse, genresResponse, tagsResponse] = await Promise.all([
+                api.get('/collections').catch(() => ({ data: [] })),
+                api.get('/documents/folders').catch(() => ({ data: [] })),
+                cachedGenres ? Promise.resolve({ data: cachedGenres }) : api.get('/documents/genres').catch(() => ({ data: [] })),
+                cachedTags ? Promise.resolve({ data: cachedTags }) : api.get('/documents/tags').catch(() => ({ data: [] })),
+            ]);
+
+            setCollections(Array.isArray(collectionsResponse.data) ? collectionsResponse.data : []);
+            setFolders(Array.isArray(foldersResponse.data) ? foldersResponse.data : []);
+
+            const genresData = Array.isArray(genresResponse.data) ? genresResponse.data : [];
+            const tagsData = Array.isArray(tagsResponse.data) ? tagsResponse.data : [];
+            setAvailableGenres(genresData);
+            setAvailableTags(tagsData);
+            if (!cachedGenres && genresData.length) setLocalCache('lib_genres', genresData);
+            if (!cachedTags && tagsData.length) setLocalCache('lib_tags', tagsData);
+        } catch (error) {
+            console.error("Erro ao buscar filtros:", error);
+        }
     };
 
-    const fetchDocuments = async (page, search, genre, tag) => {
+    const fetchDocuments = async (page, search, genre, tag, area) => {
         try {
             setLoading(true);
             const params = { page, limit: itemsPerPage };
             if (search) params.search = search;
             if (genre) params.genre = genre;
             if (tag) params.tag = tag;
+            if (area) params.area = area;
             const response = await api.get('/documents', { params });
             setDocuments(Array.isArray(response.data.items) ? response.data.items : []);
             setTotalItems(response.data.total ?? 0);
@@ -481,7 +570,7 @@ const DocumentList = () => {
                 {/* FILTROS COLAPSÁVEIS */}
                 {!loading && (() => {
                     const genreList = Array.from(new Set([...PREDEFINED_GENRES, ...availableGenres]));
-                    const activeCount = (selectedGenre ? 1 : 0) + (selectedTag ? 1 : 0);
+                    const activeCount = (selectedGenre ? 1 : 0) + (selectedTag ? 1 : 0) + (selectedArea ? 1 : 0);
                     return (
                         <div className="mb-5">
                             {/* Chips dos filtros ativos + limpar tudo */}
@@ -499,8 +588,15 @@ const DocumentList = () => {
                                             <button onClick={() => setSelectedTag(null)} className="hover:text-blue-900"><X size={10} /></button>
                                         </span>
                                     )}
+                                    {selectedArea && (
+                                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs font-medium">
+                                            <Folder size={10} />
+                                            {selectedArea.split(' / ').pop()}
+                                            <button onClick={() => setSelectedArea('')} className="hover:text-blue-900"><X size={10} /></button>
+                                        </span>
+                                    )}
                                     <button
-                                        onClick={() => { setSelectedGenre(null); setSelectedTag(null); }}
+                                        onClick={() => { setSelectedGenre(null); setSelectedTag(null); setSelectedArea(''); }}
                                         className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
                                     >
                                         <X size={11} /> Limpar tudo
@@ -511,6 +607,36 @@ const DocumentList = () => {
                             {/* Painel expansível */}
                             {filtersOpen && (
                                 <div className="border border-gray-200 rounded-xl bg-white p-4 space-y-4">
+                                    {/* Pasta — só no Acervo e quando há pastas */}
+                                    {viewMode === 'all' && folders.length > 1 && (
+                                        <div>
+                                            <div className="flex items-center gap-1.5 mb-2">
+                                                <Folder size={13} className="text-gray-400" />
+                                                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Pasta</span>
+                                            </div>
+                                            <div className="max-h-52 overflow-y-auto border border-gray-100 rounded-lg p-1.5 space-y-0.5">
+                                                <div
+                                                    className={[
+                                                        'flex items-center gap-1.5 py-1 px-2 rounded-md cursor-pointer text-sm transition-colors',
+                                                        selectedArea === '' ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-100'
+                                                    ].join(' ')}
+                                                    onClick={() => setSelectedArea('')}
+                                                >
+                                                    <FolderOpen size={14} className="text-yellow-500" />
+                                                    <span>Todos os livros</span>
+                                                </div>
+                                                {buildFolderTree(folders.filter(f => f.rel !== '')).map(node => (
+                                                    <FolderNode
+                                                        key={node.rel}
+                                                        node={node}
+                                                        selectedArea={selectedArea}
+                                                        onSelect={setSelectedArea}
+                                                        depth={0}
+                                                    />
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                     {/* Gênero */}
                                     <div>
                                         <div className="flex items-center gap-1.5 mb-2">

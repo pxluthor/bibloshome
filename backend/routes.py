@@ -1,3 +1,5 @@
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, Body, Response, Query
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select, func
@@ -11,20 +13,59 @@ from auth import get_password_hash, verify_password, create_access_token, get_cu
 
 router = APIRouter()
 
+# --- Cache TTL em memória para genres e tags (raramente mudam) ---
+_genres_cache: dict = {"data": None, "ts": 0.0}
+_tags_cache: dict = {"data": None, "ts": 0.0}
+_CACHE_TTL = 1800  # 30 minutos
+
+
 @router.get("/documents/genres")
 def list_genres(session: Session = Depends(get_session)):
+    global _genres_cache
+    if _genres_cache["data"] is not None and time.time() - _genres_cache["ts"] < _CACHE_TTL:
+        return _genres_cache["data"]
     rows = session.exec(select(Livro.genero).where(Livro.genero != None).distinct()).all()
-    return sorted([r for r in rows if r])
+    result = sorted([r for r in rows if r])
+    _genres_cache = {"data": result, "ts": time.time()}
+    return result
+
 
 @router.get("/documents/tags")
 def list_tags(session: Session = Depends(get_session)):
     """Retorna todas as tags distintas usadas nos livros."""
+    global _tags_cache
+    if _tags_cache["data"] is not None and time.time() - _tags_cache["ts"] < _CACHE_TTL:
+        return _tags_cache["data"]
     livros = session.exec(select(Livro.tags).where(Livro.tags != None)).all()
-    all_tags = set()
+    all_tags: set = set()
     for tags in livros:
         if isinstance(tags, list):
             all_tags.update(tags)
-    return sorted(all_tags)
+    result = sorted(all_tags)
+    _tags_cache = {"data": result, "ts": time.time()}
+    return result
+
+
+@router.get("/documents/folders")
+def list_folders(session: Session = Depends(get_session)):
+    """Retorna arvore de pastas derivada das areas dos livros."""
+    areas = session.exec(
+        select(Livro.area).where(Livro.area != None, Livro.area != "").distinct()
+    ).all()
+    seen: set = set()
+    entries = []
+    for area in sorted(areas):
+        if not area:
+            continue
+        parts = [p.strip() for p in area.split("/")]
+        for i in range(len(parts)):
+            rel = " / ".join(parts[: i + 1])
+            if rel not in seen:
+                seen.add(rel)
+                entries.append({"rel": rel, "depth": i, "nome": parts[i]})
+    result = [{"rel": "", "depth": 0, "nome": "Todos os livros"}]
+    result.extend(sorted(entries, key=lambda x: x["rel"].lower()))
+    return result
 
 @router.get("/documents")
 def list_documents(
@@ -33,6 +74,7 @@ def list_documents(
     search: str = Query(""),
     genre: str = Query(""),
     tag: str = Query(""),
+    area: str = Query(""),
     session: Session = Depends(get_session)
 ):
     query = select(Livro)
@@ -44,6 +86,10 @@ def list_documents(
         query = query.where(Livro.genero == genre)
     if tag:
         query = query.where(sa_func.json_contains(Livro.tags, f'"{tag}"'))
+    if area:
+        query = query.where(
+            or_(Livro.area == area, Livro.area.startswith(area + " / "))
+        )
 
     total = session.exec(select(func.count()).select_from(query.subquery())).one()
     items = session.exec(query.offset((page - 1) * limit).limit(limit)).all()
@@ -104,7 +150,12 @@ def update_book(
     
     session.add(livro)
     session.commit()
-    
+
+    # Invalida caches de genres e tags caso tenham mudado
+    global _genres_cache, _tags_cache
+    _genres_cache["data"] = None
+    _tags_cache["data"] = None
+
     return {"message": "Livro atualizado com sucesso", "livro": LivroRead.model_validate(livro)}
 
 @router.post("/documents/{doc_id}/page/{page_number}/translate")
@@ -294,16 +345,35 @@ def get_collections(current_user: Usuario = Depends(get_current_user), session: 
     collections = session.exec(
         select(ColecaoLivro).where(ColecaoLivro.usuario_id == current_user.id)
     ).all()
+    if not collections:
+        return []
+
+    # Buscar todos os items de todas as colecoes em uma unica query
+    coll_ids = [c.id for c in collections]
+    all_items = session.exec(
+        select(ColecaoLivroItem).where(ColecaoLivroItem.colecao_id.in_(coll_ids))
+    ).all()
+
+    # Buscar todos os livros em uma unica query
+    all_book_ids = list({i.livro_id for i in all_items})
+    if all_book_ids:
+        livros_rows = session.exec(select(Livro).where(Livro.id.in_(all_book_ids))).all()
+    else:
+        livros_rows = []
+    livro_map = {l.id: l for l in livros_rows}
+
+    # Agrupar items por colecao
+    items_by_coll: dict = {}
+    for item in all_items:
+        items_by_coll.setdefault(item.colecao_id, []).append(item)
 
     response = []
     for collection in collections:
-        items = session.exec(
-            select(ColecaoLivroItem).where(ColecaoLivroItem.colecao_id == collection.id)
-        ).all()
+        items = items_by_coll.get(collection.id, [])
         book_ids = [item.livro_id for item in items]
         books = []
         for bid in book_ids:
-            livro = session.get(Livro, bid)
+            livro = livro_map.get(bid)
             if livro:
                 books.append({"id": livro.id, "titulo": livro.titulo, "autor": livro.autor})
         response.append({
@@ -312,7 +382,7 @@ def get_collections(current_user: Usuario = Depends(get_current_user), session: 
             "data_criacao": collection.data_criacao,
             "book_ids": book_ids,
             "books": books,
-            "total_livros": len(book_ids)
+            "total_livros": len(book_ids),
         })
     return response
 
