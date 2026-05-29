@@ -134,6 +134,8 @@ const DocumentList = () => {
     const [collectionLoading, setCollectionLoading] = useState(null);
 
     const searchDebounceRef = useRef(null);
+    // Evita double-fetch no mount: fetchInitialData já carrega os docs
+    const filterEffectMounted = useRef(false);
 
     const navigate = useNavigate();
     const userName = localStorage.getItem('userName') || 'Estudante';
@@ -147,10 +149,14 @@ const DocumentList = () => {
         fetchPedidosPendentes();
     }, []);
 
-    // Filtros mudaram: re-fetch do zero (page 1, replace)
+    // Filtros mudaram: re-fetch do zero (pula o primeiro render — fetchInitialData já cuida)
     useEffect(() => {
+        if (!filterEffectMounted.current) {
+            filterEffectMounted.current = true;
+            return;
+        }
         if (viewMode === 'all') fetchDocuments(1, searchTerm, selectedGenre, selectedTag, selectedArea, false);
-    }, [selectedGenre, selectedTag, selectedArea, viewMode]);
+    }, [selectedGenre, selectedTag, selectedArea]); // viewMode fora — trocar aba não refaz fetch
 
     // Debounce de busca: só dispara 400ms após parar de digitar
     useEffect(() => {

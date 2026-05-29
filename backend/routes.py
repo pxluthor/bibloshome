@@ -91,6 +91,15 @@ def list_documents(
             or_(Livro.area == area, Livro.area.startswith(area + " / "))
         )
 
+    # Ordenação: sem busca → livros mais completos primeiro (capa + autor + genero)
+    #            com busca → ordem padrão (relevância do MySQL)
+    if not search:
+        query = query.order_by(
+            (Livro.capa != None).desc(),
+            (Livro.autor != None).desc(),
+            (Livro.genero != None).desc(),
+        )
+
     total = session.exec(select(func.count()).select_from(query.subquery())).one()
     items = session.exec(query.offset((page - 1) * limit).limit(limit)).all()
 
