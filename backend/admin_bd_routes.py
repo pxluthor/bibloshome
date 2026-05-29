@@ -76,7 +76,7 @@ def _listar_subpastas(pasta_raiz: str) -> list[dict]:
             depth = rel_norm.count('/') + 1 if rel_norm else 1
             result.append({'rel': rel_norm, 'depth': depth, 'nome': nome_dir})
 
-    return sorted(result, key=lambda x: x['rel'])
+    return sorted(result, key=lambda x: x['rel'].lower())
 
 
 def _scan_diff(cursor, subpasta: str):
@@ -203,6 +203,9 @@ def sync_bd(body: SyncRequest, current_user: Usuario = Depends(get_current_user)
             ids_payload = [(item_id,) for item_id in ids_para_excluir]
             cursor.executemany('DELETE FROM listaleitura WHERE livro_id = %s', ids_payload)
             cursor.executemany('DELETE FROM anotacoes WHERE livro_id = %s', ids_payload)
+            cursor.executemany('DELETE FROM estudio_artefatos WHERE livro_id = %s', ids_payload)
+            cursor.executemany('DELETE FROM colecoes_livros_itens WHERE livro_id = %s', ids_payload)
+            cursor.executemany('DELETE FROM livros_ia_status WHERE livro_id = %s', ids_payload)
             cursor.executemany('DELETE FROM livros WHERE id = %s', ids_payload)
             excluidos = cursor.rowcount
 

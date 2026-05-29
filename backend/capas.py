@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from pathlib import PureWindowsPath
 
 import fitz  # PyMuPDF
 from dotenv import load_dotenv
@@ -11,17 +11,31 @@ from models import Livro
 
 load_dotenv()
 
+PASTA_BIBLIOTECA = os.getenv("PASTA_BIBLIOTECA", "/data/biblioteca")
 
-def gerar_capas_automaticas(base_pdf_path: Optional[str] = None, commit_lote: int = 200):
+
+def _resolver_caminho(caminho: str) -> str:
+    """Resolve caminho Windows ou Linux para caminho absoluto no container."""
+    if '\\' in caminho:
+        win_path = PureWindowsPath(caminho)
+        parts = list(win_path.parts)
+        # Remove drive (ex: "E:\\") e reconstrói relativo à PASTA_BIBLIOTECA
+        if win_path.drive and len(parts) > 1:
+            partes_rel = parts[2:] if len(parts) > 2 else parts[1:]
+        else:
+            partes_rel = parts
+        return os.path.abspath(os.path.join(PASTA_BIBLIOTECA, *partes_rel))
+    if os.path.isabs(caminho):
+        return caminho
+    return os.path.abspath(os.path.join(PASTA_BIBLIOTECA, caminho))
+
+
+def gerar_capas_automaticas(commit_lote: int = 200):
     """
     Gera capas para livros sem capa.
-    - Usa PDF_SOURCE_DIR do .env como fallback para caminhos relativos.
+    - Usa _resolver_caminho() para suportar paths Windows e Linux.
     - Realiza commit em lote para reduzir overhead.
     """
-    base_path = base_pdf_path or os.getenv("PDF_SOURCE_DIR", "")
-    if base_path:
-        base_path = os.path.normpath(base_path)
-
     with Session(engine) as session:
         statement = select(Livro).where(Livro.caminho != None, Livro.capa == None)
         livros = session.exec(statement).all()
@@ -39,14 +53,7 @@ def gerar_capas_automaticas(base_pdf_path: Optional[str] = None, commit_lote: in
                 ignorados += 1
                 continue
 
-            if os.path.isabs(caminho):
-                caminho_completo = caminho
-            else:
-                if not base_path:
-                    print(f"PDF_SOURCE_DIR ausente e caminho relativo: {livro.caminho}")
-                    erros += 1
-                    continue
-                caminho_completo = os.path.join(base_path, caminho)
+            caminho_completo = _resolver_caminho(caminho)
 
             if not os.path.exists(caminho_completo):
                 print(f"Arquivo nao encontrado: {caminho_completo}")

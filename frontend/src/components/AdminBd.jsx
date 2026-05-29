@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, ArrowLeft, Database, Loader2, Search } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Database, Loader2, Search, ChevronRight, ChevronDown, Folder, FolderOpen } from 'lucide-react';
 import api from '../services/api';
 
 const tabs = [
-    { id: 'diagnostico', label: 'Diagnóstico' },
+    { id: 'diagnostico', label: 'Diagnostico' },
     { id: 'sincronizar', label: 'Sincronizar' },
     { id: 'capas', label: 'Gerar Capas' },
     { id: 'mover', label: 'Mover Livro' },
@@ -17,26 +17,147 @@ const getErrorMessage = (err) => (
     'Ocorreu um erro inesperado.'
 );
 
-const FolderSelect = ({ value, onChange, folders, loading, id }) => (
-    <select
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={loading}
-        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-100 disabled:cursor-not-allowed disabled:bg-gray-100"
-    >
-        <option value="">{loading ? 'Carregando pastas...' : 'Biblioteca completa'}</option>
-        {folders.map((f) => (
-            <option value={f.rel} key={f.rel}>
-                {'  '.repeat(f.depth) + f.nome}
-            </option>
-        ))}
-    </select>
-);
+// Constroi arvore a partir da lista plana ordenada por rel
+function buildTree(folders) {
+    const map = {};
+    const roots = [];
+    for (const f of folders) {
+        map[f.rel] = { ...f, children: [] };
+    }
+    for (const f of folders) {
+        const lastSlash = f.rel.lastIndexOf('/');
+        const parentRel = lastSlash === -1 ? null : f.rel.substring(0, lastSlash);
+        if (parentRel !== null && map[parentRel]) {
+            map[parentRel].children.push(map[f.rel]);
+        } else {
+            roots.push(map[f.rel]);
+        }
+    }
+    return roots;
+}
+
+const FolderSelect = ({ value, onChange, folders, loading }) => {
+    const [open, setOpen] = useState(false);
+    const [expanded, setExpanded] = useState({});
+    const dropdownRef = useRef(null);
+
+    const tree = useMemo(() => buildTree(folders), [folders]);
+
+    // Fecha ao clicar fora
+    useEffect(() => {
+        const handler = (e) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setOpen(false);
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, []);
+
+    // Auto-expande ate o item selecionado
+    useEffect(() => {
+        if (!value) return;
+        const parts = value.split('/');
+        const toExpand = {};
+        for (let i = 1; i <= parts.length - 1; i++) {
+            toExpand[parts.slice(0, i).join('/')] = true;
+        }
+        setExpanded(prev => ({ ...prev, ...toExpand }));
+    }, [value]);
+
+    const selectedLabel = value === ''
+        ? 'Biblioteca completa'
+        : folders.find(f => f.rel === value)?.nome || value;
+
+    const toggle = (rel, e) => {
+        e.stopPropagation();
+        setExpanded(prev => ({ ...prev, [rel]: !prev[rel] }));
+    };
+
+    const select = (rel) => {
+        onChange(rel);
+        setOpen(false);
+    };
+
+    const renderNode = (node, level = 0) => {
+        const hasChildren = node.children.length > 0;
+        const isExpanded = !!expanded[node.rel];
+        const isSelected = value === node.rel;
+
+        return (
+            <div key={node.rel}>
+                <div
+                    onClick={() => select(node.rel)}
+                    className={`flex items-center gap-1.5 cursor-pointer py-1.5 pr-3 text-sm transition-colors ${
+                        isSelected
+                            ? 'bg-purple-50 text-purple-700 font-medium'
+                            : 'text-gray-700 hover:bg-gray-50'
+                    }`}
+                    style={{ paddingLeft: `${level * 16 + 10}px` }}
+                >
+                    {hasChildren ? (
+                        <button
+                            onClick={(e) => toggle(node.rel, e)}
+                            className="flex-shrink-0 p-0.5 rounded hover:bg-gray-200 transition-colors"
+                        >
+                            <ChevronRight
+                                size={14}
+                                className={`transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}
+                            />
+                        </button>
+                    ) : (
+                        <span className="w-5 flex-shrink-0" />
+                    )}
+                    {isExpanded || isSelected
+                        ? <FolderOpen size={14} className="flex-shrink-0 text-yellow-500" />
+                        : <Folder size={14} className="flex-shrink-0 text-gray-400" />
+                    }
+                    <span className="truncate">{node.nome}</span>
+                </div>
+                {hasChildren && isExpanded && (
+                    <div>
+                        {node.children.map(child => renderNode(child, level + 1))}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    return (
+        <div className="relative" ref={dropdownRef}>
+            <button
+                type="button"
+                disabled={loading}
+                onClick={() => setOpen(o => !o)}
+                className="w-full flex items-center justify-between gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 hover:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-100 disabled:cursor-not-allowed disabled:bg-gray-100"
+            >
+                <span className="flex items-center gap-2 truncate">
+                    <Folder size={15} className="flex-shrink-0 text-yellow-500" />
+                    {loading ? 'Carregando pastas...' : selectedLabel}
+                </span>
+                <ChevronDown size={15} className={`flex-shrink-0 text-gray-400 transition-transform duration-150 ${open ? 'rotate-180' : ''}`} />
+            </button>
+
+            {open && !loading && (
+                <div className="absolute z-30 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-xl overflow-hidden">
+                    <div
+                        onClick={() => select('')}
+                        className={`flex items-center gap-2 px-3 py-2 cursor-pointer text-sm border-b border-gray-100 ${
+                            value === '' ? 'bg-purple-50 text-purple-700 font-medium' : 'text-gray-700 hover:bg-gray-50'
+                        }`}
+                    >
+                        <FolderOpen size={14} className="text-yellow-500 flex-shrink-0" />
+                        Biblioteca completa
+                    </div>
+                    <div className="max-h-72 overflow-y-auto py-1">
+                        {tree.map(node => renderNode(node, 0))}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
 
 const ErrorAlert = ({ message }) => {
     if (!message) return null;
-
     return (
         <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             <AlertCircle size={18} className="mt-0.5 flex-shrink-0" />
@@ -86,7 +207,6 @@ const AdminBd = () => {
         const loadFolders = async () => {
             setFoldersLoading(true);
             setError('');
-
             try {
                 const response = await api.get('/admin/bd/folders');
                 setFolders(Array.isArray(response.data) ? response.data : response.data?.folders || []);
@@ -96,7 +216,6 @@ const AdminBd = () => {
                 setFoldersLoading(false);
             }
         };
-
         loadFolders();
     }, []);
 
@@ -104,7 +223,6 @@ const AdminBd = () => {
         setScanning(true);
         setScanResult(null);
         setError('');
-
         try {
             const response = await api.post('/admin/bd/scan', { subpasta: selectedFolder });
             setScanResult(response.data);
@@ -119,7 +237,6 @@ const AdminBd = () => {
         setSyncing(true);
         setSyncResult(null);
         setError('');
-
         try {
             const response = await api.post('/admin/bd/sync', {
                 subpasta: syncFolder,
@@ -137,7 +254,6 @@ const AdminBd = () => {
         setCoverLoading(true);
         setCoverResult(null);
         setError('');
-
         try {
             const response = await api.post('/admin/bd/generate-covers');
             setCoverResult(response.data);
@@ -154,11 +270,8 @@ const AdminBd = () => {
         setSelectedBook(null);
         setMoveResult(null);
         setError('');
-
         try {
-            const response = await api.get('/admin/bd/search-books', {
-                params: { q: searchQuery },
-            });
+            const response = await api.get('/admin/bd/search-books', { params: { q: searchQuery } });
             const results = Array.isArray(response.data) ? response.data : response.data?.results || [];
             setSearchResults(results.slice(0, 20));
         } catch (err) {
@@ -170,11 +283,9 @@ const AdminBd = () => {
 
     const handleMove = async () => {
         if (!selectedBook) return;
-
         setMoving(true);
         setMoveResult(null);
         setError('');
-
         try {
             const response = await api.post('/admin/bd/move', {
                 livro_id: selectedBook.id,
@@ -195,13 +306,12 @@ const AdminBd = () => {
                 <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
                     <div className="relative">
                         <FolderSelect
-                            id="diagnostico-folder"
                             value={selectedFolder}
                             onChange={setSelectedFolder}
                             folders={folders}
                             loading={foldersLoading}
                         />
-                        {foldersLoading && <Loader2 size={18} className="absolute right-3 top-2.5 animate-spin text-gray-400" />}
+                        {foldersLoading && <Loader2 size={18} className="absolute right-8 top-2.5 animate-spin text-gray-400" />}
                     </div>
                     <button
                         type="button"
@@ -209,7 +319,7 @@ const AdminBd = () => {
                         disabled={scanning || foldersLoading}
                         className="rounded-lg bg-orange-500 px-4 py-2 font-semibold text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                        {scanning ? <Loader2 size={18} className="animate-spin" /> : 'Analisar Diferenças'}
+                        {scanning ? <Loader2 size={18} className="animate-spin" /> : 'Analisar Diferencas'}
                     </button>
                 </div>
             </div>
@@ -228,8 +338,8 @@ const AdminBd = () => {
                         <table className="w-full border-collapse text-sm">
                             <thead>
                                 <tr>
-                                    <th className="border-b bg-gray-50 px-3 py-2 text-left">Título</th>
-                                    <th className="border-b bg-gray-50 px-3 py-2 text-left">Área</th>
+                                    <th className="border-b bg-gray-50 px-3 py-2 text-left">Titulo</th>
+                                    <th className="border-b bg-gray-50 px-3 py-2 text-left">Area</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -249,8 +359,8 @@ const AdminBd = () => {
                             <thead>
                                 <tr>
                                     <th className="border-b bg-gray-50 px-3 py-2 text-left">ID</th>
-                                    <th className="border-b bg-gray-50 px-3 py-2 text-left">Título</th>
-                                    <th className="border-b bg-gray-50 px-3 py-2 text-left">Área</th>
+                                    <th className="border-b bg-gray-50 px-3 py-2 text-left">Titulo</th>
+                                    <th className="border-b bg-gray-50 px-3 py-2 text-left">Area</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -274,13 +384,12 @@ const AdminBd = () => {
             <div className="space-y-4 rounded-xl border bg-white p-5">
                 <div className="relative">
                     <FolderSelect
-                        id="sync-folder"
                         value={syncFolder}
                         onChange={setSyncFolder}
                         folders={folders}
                         loading={foldersLoading}
                     />
-                    {foldersLoading && <Loader2 size={18} className="absolute right-3 top-2.5 animate-spin text-gray-400" />}
+                    {foldersLoading && <Loader2 size={18} className="absolute right-8 top-2.5 animate-spin text-gray-400" />}
                 </div>
 
                 <label className="flex items-center gap-2 text-sm text-gray-700">
@@ -300,7 +409,7 @@ const AdminBd = () => {
                         onChange={(e) => setSyncConfirm(e.target.checked)}
                         className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
                     />
-                    Confirmo que quero aplicar alterações no banco
+                    Confirmo que quero aplicar alteracoes no banco
                 </label>
 
                 <button
@@ -310,7 +419,7 @@ const AdminBd = () => {
                     className="flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                     {syncing && <Loader2 size={18} className="animate-spin" />}
-                    {syncing ? 'Sincronizando...' : 'Executar Sincronização'}
+                    {syncing ? 'Sincronizando...' : 'Executar Sincronizacao'}
                 </button>
             </div>
 
@@ -326,7 +435,7 @@ const AdminBd = () => {
         <div className="space-y-6">
             <div className="space-y-4 rounded-xl border bg-white p-5">
                 <p className="text-sm text-gray-600">
-                    Gera capas automaticamente para livros que ainda não possuem imagem cadastrada.
+                    Gera capas automaticamente para livros que ainda nao possuem imagem cadastrada.
                 </p>
                 <button
                     type="button"
@@ -360,10 +469,8 @@ const AdminBd = () => {
                             type="text"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSearch();
-                            }}
-                            placeholder="Buscar por título"
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
+                            placeholder="Buscar por titulo"
                             className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-10 pr-3 text-sm text-gray-800 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-100"
                         />
                     </div>
@@ -384,10 +491,7 @@ const AdminBd = () => {
                             <button
                                 type="button"
                                 key={book.id}
-                                onClick={() => {
-                                    setSelectedBook(book);
-                                    setMoveResult(null);
-                                }}
+                                onClick={() => { setSelectedBook(book); setMoveResult(null); }}
                                 className="block w-full px-4 py-3 text-left hover:bg-gray-50"
                             >
                                 <div className="font-medium text-gray-900">{book.titulo || book.title}</div>
@@ -402,19 +506,15 @@ const AdminBd = () => {
                 <div className="space-y-4 rounded-xl border bg-white p-5">
                     <div>
                         <h3 className="font-semibold text-gray-900">{selectedBook.titulo || selectedBook.title}</h3>
-                        <p className="text-sm text-gray-500">{selectedBook.caminho || selectedBook.path || 'Caminho atual indisponível'}</p>
+                        <p className="text-sm text-gray-500">{selectedBook.caminho || selectedBook.path || 'Caminho atual indisponivel'}</p>
                     </div>
 
-                    <div className="relative">
-                        <FolderSelect
-                            id="move-folder"
-                            value={destFolder}
-                            onChange={setDestFolder}
-                            folders={folders}
-                            loading={foldersLoading}
-                        />
-                        {foldersLoading && <Loader2 size={18} className="absolute right-3 top-2.5 animate-spin text-gray-400" />}
-                    </div>
+                    <FolderSelect
+                        value={destFolder}
+                        onChange={setDestFolder}
+                        folders={folders}
+                        loading={foldersLoading}
+                    />
 
                     <button
                         type="button"
@@ -460,14 +560,12 @@ const AdminBd = () => {
                     <button
                         type="button"
                         key={tab.id}
-                        onClick={() => {
-                            setActiveTab(tab.id);
-                            setError('');
-                        }}
-                        className={`px-4 py-3 text-sm transition-colors ${activeTab === tab.id
-                            ? 'border-b-2 border-purple-600 font-semibold text-purple-600'
-                            : 'text-gray-500 hover:text-gray-700'
-                            }`}
+                        onClick={() => { setActiveTab(tab.id); setError(''); }}
+                        className={`px-4 py-3 text-sm transition-colors ${
+                            activeTab === tab.id
+                                ? 'border-b-2 border-purple-600 font-semibold text-purple-600'
+                                : 'text-gray-500 hover:text-gray-700'
+                        }`}
                     >
                         {tab.label}
                     </button>
@@ -478,7 +576,6 @@ const AdminBd = () => {
                 <div className="mb-6">
                     <ErrorAlert message={error} />
                 </div>
-
                 {activeTab === 'diagnostico' && renderDiagnostico()}
                 {activeTab === 'sincronizar' && renderSincronizar()}
                 {activeTab === 'capas' && renderCapas()}
