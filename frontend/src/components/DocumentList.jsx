@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
     Search, BookOpen, Plus, Library,
@@ -130,6 +131,7 @@ const DocumentList = () => {
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(null);
     const [collectionMenuDocId, setCollectionMenuDocId] = useState(null);
+    const [collectionMenuPos, setCollectionMenuPos] = useState({ top: 0, left: 0 });
     const [collectionName, setCollectionName] = useState("");
     const [collectionLoading, setCollectionLoading] = useState(null);
 
@@ -393,77 +395,27 @@ const DocumentList = () => {
         }
     };
 
-    const renderCollectionMenu = (docId, compact = false) => {
-        const isOpen = collectionMenuDocId === docId;
-
-        return (
-            <div className="relative">
-                <button
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        setCollectionMenuDocId(isOpen ? null : docId);
-                    }}
-                    className={`${iconTooltipClass} ${compact ? 'h-9 w-9' : 'h-10 w-10'} bg-violet-50 text-violet-700 rounded-lg hover:bg-violet-100 border border-violet-200 transition flex items-center justify-center shadow-sm flex-shrink-0`}
-                    aria-label="Adicionar a colecao"
-                >
-                    <FolderPlus size={compact ? 14 : 18} />
-                    {renderTooltip("Adicionar a colecao")}
-                </button>
-
-                {isOpen && (
-                    <div
-                        className={`absolute right-0 bottom-full mb-2 w-72 bg-white border border-gray-200 rounded-lg shadow-xl z-30 p-3 text-left`}
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div className="text-sm font-semibold text-gray-900 mb-2">Adicionar a colecao</div>
-
-                        <div className="max-h-44 overflow-y-auto space-y-1 mb-3">
-                            {collections.length === 0 ? (
-                                <p className="text-xs text-gray-500 py-2">Nenhuma colecao criada.</p>
-                            ) : (
-                                collections.map((collection) => {
-                                    const alreadyAdded = collection.book_ids?.includes(docId);
-                                    return (
-                                        <button
-                                            key={collection.id}
-                                            onClick={(e) => handleAddToCollection(e, collection.id, docId)}
-                                            disabled={alreadyAdded || collectionLoading === `${collection.id}-${docId}`}
-                                            className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-md text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-default"
-                                        >
-                                            <span className="truncate">{collection.nome}</span>
-                                            {alreadyAdded ? <Check size={16} className="text-green-600" /> : <Plus size={14} className="text-violet-600" />}
-                                        </button>
-                                    );
-                                })
-                            )}
-                        </div>
-
-                        <div className="border-t border-gray-100 pt-3">
-                            <label className="block text-xs font-medium text-gray-600 mb-1">Nova colecao</label>
-                            <div className="flex gap-2">
-                                <input
-                                    value={collectionName}
-                                    onChange={(e) => setCollectionName(e.target.value)}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter') handleCreateCollection(e, docId);
-                                    }}
-                                    className="min-w-0 flex-1 border border-gray-200 rounded-md px-2 py-1.5 text-sm text-gray-900 focus:ring-2 focus:ring-violet-500 outline-none"
-                                    placeholder="Nome"
-                                />
-                                <button
-                                    onClick={(e) => handleCreateCollection(e, docId)}
-                                    disabled={!collectionName.trim() || collectionLoading === `new-${docId}`}
-                                    className="px-3 py-1.5 bg-violet-600 text-white rounded-md text-sm font-medium hover:bg-violet-700 disabled:bg-violet-300"
-                                >
-                                    Criar
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </div>
-        );
-    };
+    const renderCollectionMenu = (docId, compact = false) => (
+        <div className="relative">
+            <button
+                onClick={(e) => {
+                    e.stopPropagation();
+                    if (collectionMenuDocId === docId) {
+                        setCollectionMenuDocId(null);
+                    } else {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setCollectionMenuPos({ top: rect.bottom + 6, left: rect.right - 288 });
+                        setCollectionMenuDocId(docId);
+                    }
+                }}
+                className={`${iconTooltipClass} ${compact ? 'h-9 w-9' : 'h-10 w-10'} bg-violet-50 text-violet-700 rounded-lg hover:bg-violet-100 border border-violet-200 transition flex items-center justify-center shadow-sm flex-shrink-0`}
+                aria-label="Adicionar a colecao"
+            >
+                <FolderPlus size={compact ? 14 : 18} />
+                {renderTooltip("Adicionar a colecao")}
+            </button>
+        </div>
+    );
 
     // --- PAGINAÇÃO: "Meus Livros" é client-side; "Acervo Completo" é server-side ---
     const myListFiltered = useMemo(() => {
@@ -867,7 +819,16 @@ const DocumentList = () => {
 
                                                                 {/* Trigger da coleção */}
                                                                 <button
-                                                                    onClick={(e) => { e.stopPropagation(); setCollectionMenuDocId(collectionMenuDocId === doc.id ? null : doc.id); }}
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        if (collectionMenuDocId === doc.id) {
+                                                                            setCollectionMenuDocId(null);
+                                                                        } else {
+                                                                            const rect = e.currentTarget.getBoundingClientRect();
+                                                                            setCollectionMenuPos({ top: rect.bottom + 6, left: rect.left });
+                                                                            setCollectionMenuDocId(doc.id);
+                                                                        }
+                                                                    }}
                                                                     className="h-7 w-7 bg-white/20 text-white rounded-lg hover:bg-white/40 border border-white/20 transition flex items-center justify-center flex-shrink-0"
                                                                     title="Coleção"
                                                                 >
@@ -907,54 +868,7 @@ const DocumentList = () => {
                                                         </div>
                                                     </div>
 
-                                                    {/* Dropdown coleção — fora do overflow-hidden para não ser clipado */}
-                                                    {collectionMenuDocId === doc.id && (
-                                                        <div
-                                                            className="absolute bottom-2 left-0 w-64 bg-white border border-gray-200 rounded-lg shadow-xl z-50 p-3 text-left"
-                                                            onClick={(e) => e.stopPropagation()}
-                                                        >
-                                                            <div className="text-sm font-semibold text-gray-900 mb-2">Adicionar a coleção</div>
-                                                            <div className="max-h-36 overflow-y-auto space-y-1 mb-3">
-                                                                {collections.length === 0 ? (
-                                                                    <p className="text-xs text-gray-500 py-2">Nenhuma coleção criada.</p>
-                                                                ) : (
-                                                                    collections.map((collection) => {
-                                                                        const alreadyAdded = collection.book_ids?.includes(doc.id);
-                                                                        return (
-                                                                            <button
-                                                                                key={collection.id}
-                                                                                onClick={(e) => handleAddToCollection(e, collection.id, doc.id)}
-                                                                                disabled={alreadyAdded || collectionLoading === `${collection.id}-${doc.id}`}
-                                                                                className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-md text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-default"
-                                                                            >
-                                                                                <span className="truncate">{collection.nome}</span>
-                                                                                {alreadyAdded ? <Check size={16} className="text-green-600" /> : <Plus size={14} className="text-violet-600" />}
-                                                                            </button>
-                                                                        );
-                                                                    })
-                                                                )}
-                                                            </div>
-                                                            <div className="border-t border-gray-100 pt-3">
-                                                                <label className="block text-xs font-medium text-gray-600 mb-1">Nova coleção</label>
-                                                                <div className="flex gap-2">
-                                                                    <input
-                                                                        value={collectionName}
-                                                                        onChange={(e) => setCollectionName(e.target.value)}
-                                                                        onKeyDown={(e) => { if (e.key === 'Enter') handleCreateCollection(e, doc.id); }}
-                                                                        className="min-w-0 flex-1 border border-gray-200 rounded-md px-2 py-1.5 text-sm text-gray-900 focus:ring-2 focus:ring-violet-500 outline-none"
-                                                                        placeholder="Nome"
-                                                                    />
-                                                                    <button
-                                                                        onClick={(e) => handleCreateCollection(e, doc.id)}
-                                                                        disabled={!collectionName.trim() || collectionLoading === `new-${doc.id}`}
-                                                                        className="px-3 py-1.5 bg-violet-600 text-white rounded-md text-sm font-medium hover:bg-violet-700 disabled:bg-violet-300"
-                                                                    >
-                                                                        Criar
-                                                                    </button>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    )}
+                                                    {/* Dropdown coleção renderizado via portal — ver CollectionPortalMenu abaixo do return */}
                                                 </div>
                                             );
                                         })}
@@ -1131,6 +1045,67 @@ const DocumentList = () => {
                     </>
                 )}
             </main>
+
+            {/* Portal do menu de coleção — escapa qualquer overflow-hidden */}
+            {collectionMenuDocId !== null && createPortal(
+                <>
+                    {/* Backdrop invisível para fechar ao clicar fora */}
+                    <div
+                        className="fixed inset-0 z-[9998]"
+                        onClick={() => setCollectionMenuDocId(null)}
+                    />
+                    <div
+                        className="fixed z-[9999] w-72 bg-white border border-gray-200 rounded-lg shadow-xl p-3 text-left"
+                        style={{ top: collectionMenuPos.top, left: Math.max(8, collectionMenuPos.left) }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="text-sm font-semibold text-gray-900 mb-2">Adicionar a coleção</div>
+                        <div className="max-h-48 overflow-y-auto space-y-1 mb-3">
+                            {collections.length === 0 ? (
+                                <p className="text-xs text-gray-500 py-2">Nenhuma coleção criada.</p>
+                            ) : (
+                                collections.map((collection) => {
+                                    const alreadyAdded = collection.book_ids?.includes(collectionMenuDocId);
+                                    return (
+                                        <button
+                                            key={collection.id}
+                                            onClick={(e) => handleAddToCollection(e, collection.id, collectionMenuDocId)}
+                                            disabled={alreadyAdded || collectionLoading === `${collection.id}-${collectionMenuDocId}`}
+                                            className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-md text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-default"
+                                        >
+                                            <span className="truncate">{collection.nome}</span>
+                                            {alreadyAdded
+                                                ? <Check size={16} className="text-green-600 flex-shrink-0" />
+                                                : <Plus size={14} className="text-violet-600 flex-shrink-0" />}
+                                        </button>
+                                    );
+                                })
+                            )}
+                        </div>
+                        <div className="border-t border-gray-100 pt-3">
+                            <label className="block text-xs font-medium text-gray-600 mb-1">Nova coleção</label>
+                            <div className="flex gap-2">
+                                <input
+                                    value={collectionName}
+                                    onChange={(e) => setCollectionName(e.target.value)}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') handleCreateCollection(e, collectionMenuDocId); }}
+                                    className="min-w-0 flex-1 border border-gray-200 rounded-md px-2 py-1.5 text-sm text-gray-900 focus:ring-2 focus:ring-violet-500 outline-none"
+                                    placeholder="Nome"
+                                    autoFocus
+                                />
+                                <button
+                                    onClick={(e) => handleCreateCollection(e, collectionMenuDocId)}
+                                    disabled={!collectionName.trim() || collectionLoading === `new-${collectionMenuDocId}`}
+                                    className="px-3 py-1.5 bg-violet-600 text-white rounded-md text-sm font-medium hover:bg-violet-700 disabled:bg-violet-300"
+                                >
+                                    Criar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </>,
+                document.body
+            )}
         </div>
     );
 };
