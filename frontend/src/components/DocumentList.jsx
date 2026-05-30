@@ -353,7 +353,16 @@ const DocumentList = () => {
         }
     };
 
-    const handleRead = (docId) => {
+    const handleRead = async (docId) => {
+        // Detecta se é EPUB pelo caminho do livro
+        try {
+            const doc = [...documents, ...myListBooks].find(d => d.id === docId);
+            const caminho = doc?.caminho || '';
+            if (caminho.toLowerCase().endsWith('.epub')) {
+                navigate(`/epub/${docId}`);
+                return;
+            }
+        } catch { /* fallback para PDF */ }
         navigate(`/document/${docId}`);
     };
 

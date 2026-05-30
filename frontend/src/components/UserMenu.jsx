@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, LogOut, ChevronDown, Bookmark, ShoppingBag, Settings, BookOpen, FileText, Database } from 'lucide-react';
+import { User, LogOut, ChevronDown, Bookmark, ShoppingBag, Settings, BookOpen, FileText, Database, BarChart2 } from 'lucide-react';
 
 const UserMenu = ({ userName, isAdmin, pedidosPendentes = 0, adminPendentes = 0 }) => {
     const [isOpen, setIsOpen] = useState(false);
@@ -115,6 +115,14 @@ const UserMenu = ({ userName, isAdmin, pedidosPendentes = 0, adminPendentes = 0 
                         >
                             <Settings size={18} className="text-gray-500" />
                             Configurações
+                        </button>
+
+                        <button
+                            onClick={() => { navigate('/estatisticas'); setIsOpen(false); }}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition"
+                        >
+                            <BarChart2 size={18} className="text-gray-500" />
+                            Estatísticas
                         </button>
                     </div>
 

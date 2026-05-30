@@ -46,6 +46,7 @@ services:
     volumes:
       - ${BIBLIOTECA_HOST_DIR:-E:\BIBLIOTECA}:/data/biblioteca:rw
       - ${FOR_INSERT_HOST_DIR:-E:\for_insert}:/data/for_insert:rw
+      - chromadb_data:/data/chromadb
     depends_on:
       db:
         condition: service_healthy
@@ -64,3 +65,4 @@ services:
 
 volumes:
   mysql_data:
+  chromadb_data:

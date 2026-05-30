@@ -14,6 +14,8 @@ import EditBook from './components/EditBook';
 import Collections from './components/Collections';
 import AdminBd from './components/AdminBd';
 import Estudio from './components/Estudio';
+import Statistics from './components/Statistics';
+import EpubReader from './components/EpubReader';
 import Toaster from './components/Toaster';
 
 // --- COMPONENTE DE PROTEÇÃO (GUARDA) REFORMULADO ---
@@ -120,6 +122,16 @@ function App() {
 
                 {/* Rotas Protegidas */}
                 <Route path="/" element={<Navigate to="/meus-livros" replace />} />
+
+                <Route
+                    path="/estatisticas"
+                    element={<PrivateRoute><Statistics /></PrivateRoute>}
+                />
+
+                <Route
+                    path="/epub/:id"
+                    element={<PrivateRoute><EpubReader /></PrivateRoute>}
+                />
 
                 <Route
                     path="/acervo"

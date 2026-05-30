@@ -119,6 +119,27 @@ def get_document_file(
     file_path = pdf_service.get_file_path(livro.caminho)
     return FileResponse(file_path, media_type="application/pdf", filename=livro.caminho)
 
+@router.get("/documents/{doc_id}/epub")
+def get_epub_file(
+    doc_id: int,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    pdf_service: PDFService = Depends(get_pdf_service),
+):
+    livro = session.get(Livro, doc_id)
+    if not livro:
+        raise HTTPException(status_code=404, detail="Livro não encontrado")
+    file_path = pdf_service.get_file_path(livro.caminho)
+    if not file_path.lower().endswith(".epub"):
+        raise HTTPException(status_code=400, detail="Este livro não é um EPUB")
+    return FileResponse(
+        file_path,
+        media_type="application/epub+zip",
+        filename=f"{livro.titulo or doc_id}.epub",
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
 @router.get("/documents/{doc_id}/details", response_model=LivroRead)
 def get_book_details(
     doc_id: int,
@@ -713,6 +734,80 @@ def delete_pedido(
     session.commit()
     
     return {"message": "Pedido cancelado com sucesso"}
+
+
+@router.get("/stats")
+def get_stats(
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Estatísticas gerais da biblioteca + progresso do usuário."""
+    # --- Biblioteca ---
+    total_livros = session.exec(select(func.count(Livro.id))).one()
+    total_com_capa = session.exec(select(func.count(Livro.id)).where(Livro.capa != None)).one()
+
+    # Livros por área (top-level: pegar tudo antes do primeiro " / ")
+    areas_raw = session.exec(
+        select(Livro.area, func.count(Livro.id))
+        .where(Livro.area != None, Livro.area != "")
+        .group_by(Livro.area)
+    ).all()
+    area_counts: dict[str, int] = {}
+    for area, cnt in areas_raw:
+        top = area.split(" / ")[0].strip() if area else "Sem área"
+        area_counts[top] = area_counts.get(top, 0) + cnt
+    por_area = sorted(
+        [{"area": k, "total": v} for k, v in area_counts.items()],
+        key=lambda x: x["total"], reverse=True
+    )[:10]
+
+    # Livros por gênero (top 8)
+    generos_raw = session.exec(
+        select(Livro.genero, func.count(Livro.id))
+        .where(Livro.genero != None, Livro.genero != "")
+        .group_by(Livro.genero)
+        .order_by(func.count(Livro.id).desc())
+    ).all()
+    por_genero = [{"genero": g, "total": c} for g, c in generos_raw[:8]]
+
+    # --- Usuário ---
+    lista = session.exec(
+        select(ListaLeitura).where(ListaLeitura.usuario_id == current_user.id)
+    ).all()
+    status_map = {"quero_ler": 0, "lendo": 0, "lido": 0}
+    for item in lista:
+        status_map[item.status] = status_map.get(item.status, 0) + 1
+
+    # Progresso de leitura (via anotações)
+    anotacoes = session.exec(
+        select(Anotacao).where(
+            Anotacao.usuario_id == current_user.id,
+            Anotacao.tipo == "progresso",
+        )
+    ).all()
+    paginas_lidas = 0
+    paginas_total = 0
+    for a in anotacoes:
+        if a.dados_json:
+            paginas_lidas += a.dados_json.get("lastPage", 0) or 0
+            paginas_total += a.dados_json.get("totalPages", 0) or 0
+
+    return {
+        "biblioteca": {
+            "total_livros": total_livros,
+            "total_com_capa": total_com_capa,
+            "por_area": por_area,
+            "por_genero": por_genero,
+        },
+        "usuario": {
+            "total_lista": len(lista),
+            "quero_ler": status_map["quero_ler"],
+            "lendo": status_map["lendo"],
+            "lido": status_map["lido"],
+            "paginas_lidas": paginas_lidas,
+            "paginas_total": paginas_total,
+        },
+    }
 
 
 @router.get("/auth/verify")
