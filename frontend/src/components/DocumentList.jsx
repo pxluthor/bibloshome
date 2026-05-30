@@ -5,7 +5,7 @@ import {
     Search, BookOpen, Plus, Library,
     Calendar, User, Tag, ChevronLeft, ChevronRight,
     Bookmark, Trash2, Filter, X, LayoutGrid, List, Edit, FolderPlus, Check, ChevronDown,
-    Folder, FolderOpen
+    Folder, FolderOpen, Info, Star
 } from 'lucide-react';
 import api from '../services/api';
 import BookCardSkeleton from './BookCardSkeleton';
@@ -141,6 +141,7 @@ const DocumentList = () => {
     const [listLoading, setListLoading] = useState(false); // fetch de livros (não desmonta filtros)
     const [actionLoading, setActionLoading] = useState(null);
     const [expandedFolders, setExpandedFolders] = useState({}); // estado de expansão da árvore (sobrevive a fetches)
+    const [detailsDoc, setDetailsDoc] = useState(null); // livro selecionado para modal de detalhes
     const [collectionMenuDocId, setCollectionMenuDocId] = useState(null);
     const [collectionMenuPos, setCollectionMenuPos] = useState({ top: 0, left: 0 });
     const [collectionName, setCollectionName] = useState("");
@@ -857,6 +858,17 @@ const DocumentList = () => {
                                                                     <FolderPlus size={12} />
                                                                 </button>
 
+                                                                {/* Detalhes (desktop hover, só se tiver sinopse) */}
+                                                                {doc.sinopse && (
+                                                                    <button
+                                                                        onClick={(e) => { e.stopPropagation(); setDetailsDoc(doc); }}
+                                                                        className="h-7 w-7 bg-white/20 text-white rounded-lg hover:bg-white/40 border border-white/20 transition flex items-center justify-center flex-shrink-0"
+                                                                        title="Detalhes"
+                                                                    >
+                                                                        <Info size={12} />
+                                                                    </button>
+                                                                )}
+
                                                                 {isInMyList ? (
                                                                     <>
                                                                         <button
@@ -892,30 +904,71 @@ const DocumentList = () => {
 
                                                     {/* Dropdown coleção renderizado via portal — ver CollectionPortalMenu abaixo do return */}
 
-                                                    {/* Mobile: strip de ação persistente (substitui hover) */}
-                                                    <div className="sm:hidden absolute bottom-0 left-0 right-0 flex rounded-b-xl overflow-hidden">
+                                                    {/* Mobile: strip vertical no lado direito (sempre visível) */}
+                                                    <div className="sm:hidden absolute right-1 top-1 flex flex-col gap-1">
+                                                        {/* Ler / Continuar */}
                                                         <button
                                                             onClick={(e) => { e.stopPropagation(); handleRead(doc.id); }}
-                                                            className="flex-1 py-1.5 text-white text-[11px] font-semibold flex items-center justify-center gap-1 bg-black/65"
+                                                            className="w-8 h-8 rounded-lg bg-black/60 text-white flex items-center justify-center backdrop-blur-sm"
+                                                            title="Ler"
                                                         >
-                                                            <BookOpen size={11} />
-                                                            {isInMyList ? (myListData[doc.id]?.current_page > 1 ? 'Continuar' : 'Ler') : 'Ver'}
+                                                            <BookOpen size={13} />
                                                         </button>
+                                                        {/* Salvar / Remover */}
                                                         {!myListIds.has(doc.id) ? (
                                                             <button
                                                                 onClick={(e) => handleAddToList(e, doc.id)}
                                                                 disabled={actionLoading === doc.id}
-                                                                className="px-2.5 py-1.5 text-white text-[11px] font-semibold flex items-center justify-center bg-blue-600/80 disabled:opacity-50"
+                                                                className="w-8 h-8 rounded-lg bg-blue-600/80 text-white flex items-center justify-center disabled:opacity-50"
+                                                                title="Salvar"
                                                             >
-                                                                <Plus size={12} />
+                                                                <Plus size={13} />
                                                             </button>
                                                         ) : (
                                                             <button
                                                                 onClick={(e) => handleRemoveFromList(e, doc.id)}
                                                                 disabled={actionLoading === doc.id}
-                                                                className="px-2.5 py-1.5 text-white text-[11px] font-semibold flex items-center justify-center bg-red-500/80 disabled:opacity-50"
+                                                                className="w-8 h-8 rounded-lg bg-red-500/80 text-white flex items-center justify-center disabled:opacity-50"
+                                                                title="Remover"
                                                             >
-                                                                <Trash2 size={12} />
+                                                                <Trash2 size={13} />
+                                                            </button>
+                                                        )}
+                                                        {/* Coleção */}
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                if (collectionMenuDocId === doc.id) {
+                                                                    setCollectionMenuDocId(null);
+                                                                } else {
+                                                                    const rect = e.currentTarget.getBoundingClientRect();
+                                                                    setCollectionMenuPos({ top: rect.bottom + 6, left: rect.right - 288 });
+                                                                    setCollectionMenuDocId(doc.id);
+                                                                }
+                                                            }}
+                                                            className="w-8 h-8 rounded-lg bg-violet-600/80 text-white flex items-center justify-center"
+                                                            title="Coleção"
+                                                        >
+                                                            <FolderPlus size={13} />
+                                                        </button>
+                                                        {/* Detalhes (só se tiver sinopse) */}
+                                                        {doc.sinopse && (
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); setDetailsDoc(doc); }}
+                                                                className="w-8 h-8 rounded-lg bg-gray-700/70 text-white flex items-center justify-center"
+                                                                title="Detalhes"
+                                                            >
+                                                                <Info size={13} />
+                                                            </button>
+                                                        )}
+                                                        {/* Editar (admin) */}
+                                                        {isAdmin && (
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); navigate(`/edit-book/${doc.id}`); }}
+                                                                className="w-8 h-8 rounded-lg bg-gray-600/70 text-white flex items-center justify-center"
+                                                                title="Editar"
+                                                            >
+                                                                <Edit size={13} />
                                                             </button>
                                                         )}
                                                     </div>
@@ -1092,6 +1145,70 @@ const DocumentList = () => {
                     </>
                 )}
             </main>
+
+            {/* Modal de detalhes do livro */}
+            {detailsDoc && createPortal(
+                <div
+                    className="fixed inset-0 z-[9999] flex items-end sm:items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+                    onClick={() => setDetailsDoc(null)}
+                >
+                    <div
+                        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <div className="flex gap-4 p-5">
+                            <img
+                                src={`${api.defaults.baseURL}/documents/${detailsDoc.id}/cover`}
+                                alt={detailsDoc.titulo}
+                                className="w-24 h-36 object-cover rounded-lg shadow-md flex-shrink-0"
+                                onError={e => e.target.style.display = 'none'}
+                            />
+                            <div className="flex-1 min-w-0">
+                                <h2 className="font-bold text-gray-900 text-base leading-tight mb-1">{detailsDoc.titulo}</h2>
+                                {detailsDoc.autor && <p className="text-sm text-gray-600 mb-1">{detailsDoc.autor}</p>}
+                                <div className="flex flex-wrap gap-1.5 mt-2">
+                                    {detailsDoc.ano && (
+                                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-xs">
+                                            <Calendar size={10} />{detailsDoc.ano}
+                                        </span>
+                                    )}
+                                    {detailsDoc.genero && (
+                                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs">
+                                            <Tag size={10} />{detailsDoc.genero}
+                                        </span>
+                                    )}
+                                    {detailsDoc.area && (
+                                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 text-xs">
+                                            <Folder size={10} />{detailsDoc.area.split(' / ').pop()}
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                        {detailsDoc.sinopse && (
+                            <div className="px-5 pb-4">
+                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Sinopse</p>
+                                <p className="text-sm text-gray-700 leading-relaxed">{detailsDoc.sinopse}</p>
+                            </div>
+                        )}
+                        <div className="flex gap-2 px-5 pb-5">
+                            <button
+                                onClick={() => { handleRead(detailsDoc.id); setDetailsDoc(null); }}
+                                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition"
+                            >
+                                <BookOpen size={15} /> Ler
+                            </button>
+                            <button
+                                onClick={() => setDetailsDoc(null)}
+                                className="px-4 py-2.5 border border-gray-200 text-gray-600 rounded-xl text-sm hover:bg-gray-50 transition"
+                            >
+                                Fechar
+                            </button>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
 
             {/* Portal do menu de coleção — escapa qualquer overflow-hidden */}
             {collectionMenuDocId !== null && createPortal(

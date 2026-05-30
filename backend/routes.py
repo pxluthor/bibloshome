@@ -778,19 +778,19 @@ def get_stats(
     for item in lista:
         status_map[item.status] = status_map.get(item.status, 0) + 1
 
-    # Progresso de leitura (via anotações)
+    # Progresso de leitura (via anotações — dados_json contém lastPage/totalPages)
     anotacoes = session.exec(
-        select(Anotacao).where(
-            Anotacao.usuario_id == current_user.id,
-            Anotacao.tipo == "progresso",
-        )
+        select(Anotacao).where(Anotacao.usuario_id == current_user.id)
     ).all()
     paginas_lidas = 0
     paginas_total = 0
     for a in anotacoes:
         if a.dados_json:
-            paginas_lidas += a.dados_json.get("lastPage", 0) or 0
-            paginas_total += a.dados_json.get("totalPages", 0) or 0
+            lp = a.dados_json.get("lastPage", 0) or 0
+            tp = a.dados_json.get("totalPages", 0) or 0
+            if lp > 0 and tp > 0:
+                paginas_lidas += lp
+                paginas_total += tp
 
     return {
         "biblioteca": {
