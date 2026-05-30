@@ -904,37 +904,8 @@ const DocumentList = () => {
 
                                                     {/* Dropdown coleção renderizado via portal — ver CollectionPortalMenu abaixo do return */}
 
-                                                    {/* Mobile: strip vertical no lado direito (sempre visível) */}
+                                                    {/* Mobile: strip vertical direita — Coleção, Detalhes, Editar */}
                                                     <div className="sm:hidden absolute right-1 top-1 flex flex-col gap-1">
-                                                        {/* Ler / Continuar */}
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); handleRead(doc.id); }}
-                                                            className="w-8 h-8 rounded-lg bg-black/60 text-white flex items-center justify-center backdrop-blur-sm"
-                                                            title="Ler"
-                                                        >
-                                                            <BookOpen size={13} />
-                                                        </button>
-                                                        {/* Salvar / Remover */}
-                                                        {!myListIds.has(doc.id) ? (
-                                                            <button
-                                                                onClick={(e) => handleAddToList(e, doc.id)}
-                                                                disabled={actionLoading === doc.id}
-                                                                className="w-8 h-8 rounded-lg bg-blue-600/80 text-white flex items-center justify-center disabled:opacity-50"
-                                                                title="Salvar"
-                                                            >
-                                                                <Plus size={13} />
-                                                            </button>
-                                                        ) : (
-                                                            <button
-                                                                onClick={(e) => handleRemoveFromList(e, doc.id)}
-                                                                disabled={actionLoading === doc.id}
-                                                                className="w-8 h-8 rounded-lg bg-red-500/80 text-white flex items-center justify-center disabled:opacity-50"
-                                                                title="Remover"
-                                                            >
-                                                                <Trash2 size={13} />
-                                                            </button>
-                                                        )}
-                                                        {/* Coleção */}
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
@@ -951,7 +922,6 @@ const DocumentList = () => {
                                                         >
                                                             <FolderPlus size={13} />
                                                         </button>
-                                                        {/* Detalhes (só se tiver sinopse) */}
                                                         {doc.sinopse && (
                                                             <button
                                                                 onClick={(e) => { e.stopPropagation(); setDetailsDoc(doc); }}
@@ -961,7 +931,6 @@ const DocumentList = () => {
                                                                 <Info size={13} />
                                                             </button>
                                                         )}
-                                                        {/* Editar (admin) */}
                                                         {isAdmin && (
                                                             <button
                                                                 onClick={(e) => { e.stopPropagation(); navigate(`/edit-book/${doc.id}`); }}
@@ -969,6 +938,34 @@ const DocumentList = () => {
                                                                 title="Editar"
                                                             >
                                                                 <Edit size={13} />
+                                                            </button>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Mobile: strip horizontal inferior — Ler + Salvar/Remover */}
+                                                    <div className="sm:hidden absolute bottom-0 left-0 right-0 flex rounded-b-xl overflow-hidden">
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); handleRead(doc.id); }}
+                                                            className="flex-1 py-1.5 text-white text-[11px] font-semibold flex items-center justify-center gap-1 bg-black/65"
+                                                        >
+                                                            <BookOpen size={11} />
+                                                            {isInMyList ? (myListData[doc.id]?.current_page > 1 ? 'Continuar' : 'Ler') : 'Ver'}
+                                                        </button>
+                                                        {!myListIds.has(doc.id) ? (
+                                                            <button
+                                                                onClick={(e) => handleAddToList(e, doc.id)}
+                                                                disabled={actionLoading === doc.id}
+                                                                className="px-3 py-1.5 text-white text-[11px] font-semibold flex items-center justify-center gap-1 bg-blue-600/80 disabled:opacity-50"
+                                                            >
+                                                                <Plus size={12} /> Salvar
+                                                            </button>
+                                                        ) : (
+                                                            <button
+                                                                onClick={(e) => handleRemoveFromList(e, doc.id)}
+                                                                disabled={actionLoading === doc.id}
+                                                                className="px-2.5 py-1.5 text-white flex items-center justify-center bg-red-500/80 disabled:opacity-50"
+                                                            >
+                                                                <Trash2 size={12} />
                                                             </button>
                                                         )}
                                                     </div>
