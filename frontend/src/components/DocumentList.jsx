@@ -465,7 +465,7 @@ const DocumentList = () => {
                 </div>
             </header>
 
-            <main className="max-w-7xl mx-auto px-4 py-8">
+            <main className="max-w-7xl mx-auto px-4 py-4 sm:py-8">
                 {/* CONTROLES */}
                 <div className="flex flex-col gap-3 mb-6">
                     {/* Linha 1: Tabs + Toggle */}
@@ -739,7 +739,7 @@ const DocumentList = () => {
                             <>
                                 {viewLayout === 'grid' ? (
                                     // MODO GRID — cover-only, info no hover
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                                    <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-2 sm:gap-3">
                                         {currentItems.map((doc, index) => {
                                             const isInMyList = myListIds.has(doc.id);
                                             const myListItem = myListData[doc.id];
@@ -869,6 +869,34 @@ const DocumentList = () => {
                                                     </div>
 
                                                     {/* Dropdown coleção renderizado via portal — ver CollectionPortalMenu abaixo do return */}
+
+                                                    {/* Mobile: strip de ação persistente (substitui hover) */}
+                                                    <div className="sm:hidden absolute bottom-0 left-0 right-0 flex rounded-b-xl overflow-hidden">
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); handleRead(doc.id); }}
+                                                            className="flex-1 py-1.5 text-white text-[11px] font-semibold flex items-center justify-center gap-1 bg-black/65"
+                                                        >
+                                                            <BookOpen size={11} />
+                                                            {isInMyList ? (myListData[doc.id]?.current_page > 1 ? 'Continuar' : 'Ler') : 'Ver'}
+                                                        </button>
+                                                        {!myListIds.has(doc.id) ? (
+                                                            <button
+                                                                onClick={(e) => handleAddToList(e, doc.id)}
+                                                                disabled={actionLoading === doc.id}
+                                                                className="px-2.5 py-1.5 text-white text-[11px] font-semibold flex items-center justify-center bg-blue-600/80 disabled:opacity-50"
+                                                            >
+                                                                <Plus size={12} />
+                                                            </button>
+                                                        ) : (
+                                                            <button
+                                                                onClick={(e) => handleRemoveFromList(e, doc.id)}
+                                                                disabled={actionLoading === doc.id}
+                                                                className="px-2.5 py-1.5 text-white text-[11px] font-semibold flex items-center justify-center bg-red-500/80 disabled:opacity-50"
+                                                            >
+                                                                <Trash2 size={12} />
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             );
                                         })}
@@ -907,16 +935,13 @@ const DocumentList = () => {
 
                                                     {/* Informações compactas */}
                                                     <div className="flex-1 min-w-0">
-                                                        <h3 className="font-bold text-gray-900 text-base truncate">{doc.titulo}</h3>
-                                                        <div className="flex items-center gap-3 text-sm text-gray-600 mt-0.5">
-                                                            <span className="truncate">{doc.autor || "Autor Desconhecido"}</span>
-                                                            <span className="text-gray-300">•</span>
-                                                            <span>{doc.ano || 'N/A'}</span>
+                                                        <h3 className="font-bold text-gray-900 text-sm sm:text-base truncate">{doc.titulo}</h3>
+                                                        <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5 text-xs sm:text-sm text-gray-600 mt-0.5">
+                                                            <span className="truncate max-w-[120px] sm:max-w-none">{doc.autor || "Autor Desconhecido"}</span>
+                                                            <span className="text-gray-300 hidden sm:inline">•</span>
+                                                            <span className="hidden sm:inline">{doc.ano || 'N/A'}</span>
                                                             {doc.genero && (
-                                                                <>
-                                                                    <span className="text-gray-300">•</span>
-                                                                    <span className="text-blue-600 font-medium">{doc.genero}</span>
-                                                                </>
+                                                                <span className="text-blue-600 font-medium">{doc.genero}</span>
                                                             )}
                                                         </div>
 
@@ -941,12 +966,12 @@ const DocumentList = () => {
                                                     </div>
 
                                                     {/* Botões de ação compactos */}
-                                                    <div className="flex items-center gap-2 flex-shrink-0">
-                                                        {/* Botão Editar (apenas admin) */}
+                                                    <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
+                                                        {/* Botão Editar (apenas admin, oculto em mobile) */}
                                                         {isAdmin && (
-                                                            <button 
+                                                            <button
                                                                 onClick={() => navigate(`/edit-book/${doc.id}`)}
-                                                                className={`${iconTooltipClass} h-9 w-9 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 border border-gray-300 transition flex items-center justify-center flex-shrink-0`}
+                                                                className={`${iconTooltipClass} hidden sm:flex h-9 w-9 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 border border-gray-300 transition items-center justify-center flex-shrink-0`}
                                                                 aria-label="Editar livro"
                                                             >
                                                                 <Edit size={14} />
@@ -1056,7 +1081,7 @@ const DocumentList = () => {
                     />
                     <div
                         className="fixed z-[9999] w-72 bg-white border border-gray-200 rounded-lg shadow-xl p-3 text-left"
-                        style={{ top: collectionMenuPos.top, left: Math.max(8, collectionMenuPos.left) }}
+                        style={{ top: collectionMenuPos.top, left: Math.min(Math.max(8, collectionMenuPos.left), window.innerWidth - 296) }}
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="text-sm font-semibold text-gray-900 mb-2">Adicionar a coleção</div>
