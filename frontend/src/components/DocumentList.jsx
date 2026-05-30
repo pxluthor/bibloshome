@@ -45,9 +45,10 @@ function buildFolderTree(items) {
     return roots;
 }
 
-function FolderNode({ node, selectedArea, onSelect, depth = 0 }) {
-    const [open, setOpen] = React.useState(false);
+// FolderNode controlado: expanded/onToggle vivem no pai (DocumentList) e sobrevivem a re-renders
+function FolderNode({ node, selectedArea, onSelect, expanded, onToggle, depth = 0 }) {
     const hasChildren = node.children && node.children.length > 0;
+    const isOpen = !!expanded[node.rel];
     const isSelected = selectedArea === node.rel;
     return (
         <div>
@@ -61,10 +62,10 @@ function FolderNode({ node, selectedArea, onSelect, depth = 0 }) {
                 {/* Ícone: clica para expandir/colapsar (apenas se tem filhos) */}
                 <span
                     className="flex-shrink-0 cursor-pointer"
-                    onClick={() => hasChildren && setOpen(o => !o)}
+                    onClick={() => hasChildren && onToggle(node.rel)}
                 >
                     {hasChildren
-                        ? (open
+                        ? (isOpen
                             ? <FolderOpen size={14} className="text-yellow-500" />
                             : <Folder size={14} className="text-yellow-500" />)
                         : <Folder size={14} className="text-gray-400" />}
@@ -79,15 +80,23 @@ function FolderNode({ node, selectedArea, onSelect, depth = 0 }) {
                 {/* Chevron: clica para expandir/colapsar */}
                 {hasChildren && (
                     <button
-                        onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+                        onClick={(e) => { e.stopPropagation(); onToggle(node.rel); }}
                         className="ml-auto flex-shrink-0 p-0.5 rounded hover:bg-black/10"
                     >
-                        <ChevronDown size={12} className={['transition-transform', open ? 'rotate-180' : ''].join(' ')} />
+                        <ChevronDown size={12} className={['transition-transform', isOpen ? 'rotate-180' : ''].join(' ')} />
                     </button>
                 )}
             </div>
-            {hasChildren && open && node.children.map(child => (
-                <FolderNode key={child.rel} node={child} selectedArea={selectedArea} onSelect={onSelect} depth={depth + 1} />
+            {hasChildren && isOpen && node.children.map(child => (
+                <FolderNode
+                    key={child.rel}
+                    node={child}
+                    selectedArea={selectedArea}
+                    onSelect={onSelect}
+                    expanded={expanded}
+                    onToggle={onToggle}
+                    depth={depth + 1}
+                />
             ))}
         </div>
     );
@@ -128,8 +137,10 @@ const DocumentList = () => {
     const sentinelRef = useRef(null);
 
     // --- ESTADOS DE CARREGAMENTO ---
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(true);       // carga inicial (monta filtros)
+    const [listLoading, setListLoading] = useState(false); // fetch de livros (não desmonta filtros)
     const [actionLoading, setActionLoading] = useState(null);
+    const [expandedFolders, setExpandedFolders] = useState({}); // estado de expansão da árvore (sobrevive a fetches)
     const [collectionMenuDocId, setCollectionMenuDocId] = useState(null);
     const [collectionMenuPos, setCollectionMenuPos] = useState({ top: 0, left: 0 });
     const [collectionName, setCollectionName] = useState("");
@@ -260,7 +271,7 @@ const DocumentList = () => {
     const fetchDocuments = async (page, search, genre, tag, area, append = false) => {
         try {
             if (append) setIsLoadingMore(true);
-            else setLoading(true);
+            else setListLoading(true);
             const params = { page, limit: itemsPerPage };
             if (search) params.search = search;
             if (genre) params.genre = genre;
@@ -280,7 +291,7 @@ const DocumentList = () => {
         } catch (error) {
             console.error("Erro ao buscar livros:", error);
         } finally {
-            setLoading(false);
+            setListLoading(false);
             setIsLoadingMore(false);
         }
     };
@@ -633,6 +644,8 @@ const DocumentList = () => {
                                                         node={node}
                                                         selectedArea={selectedArea}
                                                         onSelect={setSelectedArea}
+                                                        expanded={expandedFolders}
+                                                        onToggle={(rel) => setExpandedFolders(prev => ({ ...prev, [rel]: !prev[rel] }))}
                                                         depth={0}
                                                     />
                                                 ))}
@@ -713,8 +726,8 @@ const DocumentList = () => {
                 })()}
 
                 {/* RESULTADOS */}
-                {loading ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                {(loading || listLoading) ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-2 sm:gap-3">
                         {Array.from({ length: itemsPerPage }).map((_, index) => (
                             <BookCardSkeleton key={index} />
                         ))}

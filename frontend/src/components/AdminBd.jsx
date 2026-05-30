@@ -640,7 +640,7 @@ const AdminBd = () => {
                 <div className="flex items-center justify-between gap-4">
                     <div className="flex items-center gap-3">
                         <Database className="text-purple-600" size={26} />
-                        <h1 className="text-xl font-semibold text-gray-900">AdminBd — Gerenciamento de Biblioteca</h1>
+                        <h1 className="text-xl font-semibold text-gray-900">Gerenciamento de Biblioteca</h1>
                     </div>
                     <button
                         type="button"

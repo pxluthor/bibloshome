@@ -58,17 +58,6 @@ const UserMenu = ({ userName, isAdmin, pedidosPendentes = 0, adminPendentes = 0 
                     <div className="py-2">
                         <button
                             onClick={() => {
-                                navigate('/');
-                                setIsOpen(false);
-                            }}
-                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition"
-                        >
-                            <BookOpen size={18} className="text-gray-500" />
-                            Acervo Completo
-                        </button>
-
-                        <button
-                            onClick={() => {
                                 navigate('/meus-pedidos');
                                 setIsOpen(false);
                             }}
