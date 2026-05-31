@@ -157,6 +157,7 @@ def get_document_file(
         file_path,
         media_type="application/pdf",
         filename=f"{livro.titulo or doc_id}.pdf",
+        headers={"Cache-Control": "private, max-age=3600"},  # cache 1h no browser
     )
 
 @router.get("/documents/{doc_id}/epub")
