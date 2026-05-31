@@ -8,17 +8,17 @@ class Livro(SQLModel, table=True):
     __tablename__ = "livros"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    titulo: Optional[str]
+    titulo: Optional[str]  = Field(default=None, max_length=500)
     autor: Optional[str]
     ano: Optional[int]
     editora: Optional[str]
     genero: Optional[str]
-    area: Optional[str]
+    area: Optional[str]    = Field(default=None, max_length=500)
     idioma: Optional[str]
     paginas: Optional[int]
     sinopse: Optional[str]
-    caminho: Optional[str]
-    capa: Optional[bytes] = Field(default=None)
+    caminho: Optional[str] = Field(default=None, max_length=1000)
+    capa: Optional[bytes]  = Field(default=None)
     data_adicao: Optional[datetime] = Field(default_factory=datetime.utcnow)
     tags: Optional[List] = Field(default=None, sa_column=Column(JSON))
 
