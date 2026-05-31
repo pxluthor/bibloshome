@@ -55,6 +55,7 @@ export default function EpubReader() {
 
         let book = null;
         let onKey = null;
+        let onResize = null;
         let cancelled = false;
 
         const init = async () => {
@@ -77,12 +78,27 @@ export default function EpubReader() {
             book = ePub(buffer);
             bookRef.current = book;
 
+            const w = viewerRef.current.clientWidth || window.innerWidth;
+            const h = viewerRef.current.clientHeight || window.innerHeight - 90;
+
             const rendition = book.renderTo(viewerRef.current, {
-                width: '100%',
-                height: '100%',
+                width: w,
+                height: h,
                 spread: 'none',
+                flow: 'paginated',
+                manager: 'default',
             });
             renditionRef.current = rendition;
+
+            // Redimensiona quando a janela muda de tamanho
+            onResize = () => {
+                if (!viewerRef.current) return;
+                rendition.resize(
+                    viewerRef.current.clientWidth || window.innerWidth,
+                    viewerRef.current.clientHeight || window.innerHeight - 90
+                );
+            };
+            window.addEventListener('resize', onResize);
 
             // Aplica tema e fonte
             Object.entries(THEMES).forEach(([name, styles]) => rendition.themes.register(name, styles));
@@ -147,6 +163,7 @@ export default function EpubReader() {
         return () => {
             cancelled = true;
             if (onKey) window.removeEventListener('keydown', onKey);
+            if (onResize) window.removeEventListener('resize', onResize);
             if (book) book.destroy();
         };
     }, [id]);
