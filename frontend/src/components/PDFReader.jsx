@@ -81,7 +81,7 @@ const PDFReader = () => {
     // MEMOIZAÇÃO DO PDF - Evita recarregamento ao trocar abas ou redimensionar
     const pdfFile = useMemo(() => ({
         url: `${api.defaults.baseURL}/documents/${id}/file`,
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        httpHeaders: { Authorization: `Bearer ${localStorage.getItem('token')}` },
         withCredentials: true
     }), [id]);
 
