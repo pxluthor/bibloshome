@@ -11,6 +11,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ---
 
+## ⚠️ REGRA CRÍTICA — Backup antes de qualquer docker compose up
+
+**SEMPRE** rodar o backup antes de qualquer operação docker que possa recriar containers:
+
+```powershell
+# Fazer backup (salva em backups/ com timestamp)
+.\backup-db.ps1
+
+# Restaurar se algo der errado
+.\restore-db.ps1 backups\bibloshome_YYYY-MM-DD_HH-mm.sql.zip
+```
+
+**Nunca rodar `docker compose up` sem antes confirmar:**
+1. O container `bibloshome-db` já está rodando (`docker ps | grep bibloshome-db`)
+2. O banco tem dados (`docker exec bibloshome-db bash -c "mysql -u bibloshome -pbibloshome bibloshome -e 'SELECT COUNT(*) FROM usuario;' 2>/dev/null"`)
+3. Backup feito com `.\backup-db.ps1`
+
+> Lição aprendida (31/05/2026): `docker compose up -d backend frontend` recriou o container do DB
+> silenciosamente porque o container anterior não estava associado ao compose file atual,
+> resultando em perda de dados (lista de leitura, coleções, progresso). Dados de arquivos
+> em E:\BIBLIOTECA são sempre preservados; apenas metadados do banco são perdidos.
+
+---
+
 ## Common Commands
 
 ### Development
