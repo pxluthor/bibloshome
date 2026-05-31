@@ -18,9 +18,12 @@ _genres_cache: dict = {"data": None, "ts": 0.0}
 _tags_cache: dict = {"data": None, "ts": 0.0}
 _CACHE_TTL = 1800  # 30 minutos
 
+# Whitelist de status válidos para lista de leitura
+VALID_READING_STATUSES = {"quero_ler", "lendo", "lido"}
+
 
 @router.get("/documents/genres")
-def list_genres(session: Session = Depends(get_session)):
+def list_genres(current_user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)):
     global _genres_cache
     if _genres_cache["data"] is not None and time.time() - _genres_cache["ts"] < _CACHE_TTL:
         return _genres_cache["data"]
@@ -31,7 +34,7 @@ def list_genres(session: Session = Depends(get_session)):
 
 
 @router.get("/documents/tags")
-def list_tags(session: Session = Depends(get_session)):
+def list_tags(current_user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)):
     """Retorna todas as tags distintas usadas nos livros."""
     global _tags_cache
     if _tags_cache["data"] is not None and time.time() - _tags_cache["ts"] < _CACHE_TTL:
@@ -47,7 +50,7 @@ def list_tags(session: Session = Depends(get_session)):
 
 
 @router.get("/documents/folders")
-def list_folders(session: Session = Depends(get_session)):
+def list_folders(current_user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)):
     """Retorna arvore de pastas derivada das areas dos livros."""
     areas = session.exec(
         select(Livro.area).where(Livro.area != None, Livro.area != "").distinct()
@@ -75,6 +78,7 @@ def list_documents(
     genre: str = Query(""),
     tag: str = Query(""),
     area: str = Query(""),
+    current_user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
     query = select(Livro)
@@ -107,7 +111,8 @@ def list_documents(
 
 @router.get("/documents/{doc_id}/file")
 def get_document_file(
-    doc_id: int, 
+    doc_id: int,
+    current_user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
     pdf_service: PDFService = Depends(get_pdf_service)
 ):
@@ -136,7 +141,6 @@ def get_epub_file(
         file_path,
         media_type="application/epub+zip",
         filename=f"{livro.titulo or doc_id}.epub",
-        headers={"Access-Control-Allow-Origin": "*"},
     )
 
 
@@ -190,8 +194,9 @@ def update_book(
 
 @router.post("/documents/{doc_id}/page/{page_number}/translate")
 def translate_page(
-    doc_id: int, 
-    page_number: int, 
+    doc_id: int,
+    page_number: int,
+    current_user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
     pdf_service: PDFService = Depends(get_pdf_service),
     translation_service: TranslationService = Depends(get_translation_service)
@@ -222,7 +227,7 @@ def register(user: UsuarioCreate, session: Session = Depends(get_session)):
     # Cria usuário com senha hash
     hashed_password = get_password_hash(user.senha)
     # Importante: O SQL espera 'nome', 'email', 'senha_hash', 'is_admin'
-    novo_usuario = Usuario(nome=user.nome, email=user.email, senha_hash=hashed_password, is_admin=user.is_admin)
+    novo_usuario = Usuario(nome=user.nome, email=user.email, senha_hash=hashed_password, is_admin=False)
     
     session.add(novo_usuario)
     session.commit()
@@ -297,12 +302,18 @@ def update_list_status(
     current_user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
+    if status_data.status not in VALID_READING_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Status inválido. Use: {', '.join(sorted(VALID_READING_STATUSES))}"
+        )
+
     statement = select(ListaLeitura).where(
         ListaLeitura.usuario_id == current_user.id,
         ListaLeitura.livro_id == livro_id
     )
     item = session.exec(statement).first()
-    
+
     if not item:
         # Se não estiver na lista, adiciona automaticamente com o status novo
         novo_item = ListaLeitura(usuario_id=current_user.id, livro_id=livro_id, status=status_data.status)
@@ -310,7 +321,7 @@ def update_list_status(
     else:
         item.status = status_data.status
         session.add(item)
-        
+
     session.commit()
     return {"status": "success", "new_status": status_data.status}
 
@@ -553,7 +564,11 @@ def get_cover(doc_id: int, session: Session = Depends(get_session)):
     livro = session.get(Livro, doc_id)
     if not livro or not livro.capa:
         raise HTTPException(status_code=404)
-    return Response(content=livro.capa, media_type="image/jpeg")
+    return Response(
+        content=livro.capa,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"},
+    )
 
 @router.get("/documents/{doc_id}/annotations")
 def get_annotations(
@@ -661,18 +676,21 @@ def get_all_pedidos(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Acesso negado. Apenas administradores.")
     
-    statement = select(PedidoLivro).order_by(PedidoLivro.data_criacao.desc())
-    pedidos = session.exec(statement).all()
-    
+    # JOIN com Usuario para evitar N+1 queries
+    statement = (
+        select(PedidoLivro, Usuario)
+        .join(Usuario, PedidoLivro.usuario_id == Usuario.id)
+        .order_by(PedidoLivro.data_criacao.desc())
+    )
+    results = session.exec(statement).all()
+
     resultado = []
-    for pedido in pedidos:
-        # Busca nome do usuário
-        usuario = session.get(Usuario, pedido.usuario_id)
+    for pedido, usuario in results:
         resultado.append({
             "id": pedido.id,
             "usuario_id": pedido.usuario_id,
-            "usuario_nome": usuario.nome if usuario else "Desconhecido",
-            "usuario_email": usuario.email if usuario else "Desconhecido",
+            "usuario_nome": usuario.nome,
+            "usuario_email": usuario.email,
             "titulo": pedido.titulo,
             "autor": pedido.autor,
             "editora": pedido.editora,
@@ -681,7 +699,7 @@ def get_all_pedidos(
             "data_criacao": pedido.data_criacao,
             "data_atualizacao": pedido.data_atualizacao
         })
-    
+
     return resultado
 
 # Atualizar status do pedido (apenas admin)

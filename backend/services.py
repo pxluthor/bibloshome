@@ -42,15 +42,11 @@ class PDFService:
         return unique_candidates
 
     def get_file_path(self, filename: str) -> str:
-        print(f"DEBUG: Resolving path for filename: {filename}")
         for file_path in self._candidate_paths(filename):
-            print(f"DEBUG: Checking path: {file_path}")
             if os.path.exists(file_path):
-                print(f"DEBUG: File found at: {file_path}")
                 return file_path
 
-        print(f"DEBUG: File not found for: {filename}")
-        raise HTTPException(status_code=404, detail=f"PDF file not found: {filename}")
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
 
     def extract_text(self, file_path: str, page_number: int) -> str:
         """

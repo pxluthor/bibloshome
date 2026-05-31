@@ -97,7 +97,7 @@ class UsuarioCreate(SQLModel):
     nome: str
     email: str
     senha: str
-    is_admin: bool = Field(default=False)
+    # is_admin removido intencionalmente — novos usuários nunca são admin via API pública
 
 class UsuarioLogin(SQLModel):
     email: str
