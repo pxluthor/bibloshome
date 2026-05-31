@@ -53,82 +53,101 @@ export default function EpubReader() {
     useEffect(() => {
         if (!viewerRef.current) return;
 
-        const book = ePub(epubUrl, {
-            requestHeaders: { Authorization: `Bearer ${token}` },
-        });
-        bookRef.current = book;
+        let book = null;
+        let onKey = null;
+        let cancelled = false;
 
-        const rendition = book.renderTo(viewerRef.current, {
-            width: '100%',
-            height: '100%',
-            spread: 'none',
-        });
-        renditionRef.current = rendition;
-
-        // Aplica tema e fonte
-        Object.entries(THEMES).forEach(([name, styles]) => rendition.themes.register(name, styles));
-        rendition.themes.select(theme);
-        rendition.themes.fontSize(`${FONT_SIZES[fontSizeIdx]}px`);
-
-        book.ready.then(async () => {
-            setLoading(false);
-
-            // Título
-            const meta = await book.loaded.metadata;
-            setTitulo(meta.title || 'Livro');
-
-            // TOC
-            const nav = await book.loaded.navigation;
-            setToc(nav.toc || []);
-
-            // Carrega anotações existentes (preserva bookmarks/notes) e retoma posição
+        const init = async () => {
+            // Baixa o EPUB como ArrayBuffer — epub.js descompacta em memória
+            // sem tentar buscar arquivos internos no servidor (evita 404 em META-INF/*)
+            let buffer;
             try {
-                const res = await api.get(`/documents/${id}/annotations`);
-                const data = res.data || {};
-                // Guarda no ref para não sobrescrever ao salvar progresso
-                annotationsRef.current = {
-                    bookmarks: data.bookmarks || [],
-                    notes: data.notes || {},
-                    highlights: data.highlights || {},
-                };
-                const cfi = data.lastCfi;
-                if (cfi) {
-                    await rendition.display(cfi);
-                } else {
+                const res = await fetch(epubUrl, {
+                    headers: { Authorization: `Bearer ${token}` },
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                buffer = await res.arrayBuffer();
+            } catch {
+                if (!cancelled) { setLoading(false); setError('Não foi possível baixar o arquivo EPUB.'); }
+                return;
+            }
+
+            if (cancelled) return;
+
+            book = ePub(buffer);
+            bookRef.current = book;
+
+            const rendition = book.renderTo(viewerRef.current, {
+                width: '100%',
+                height: '100%',
+                spread: 'none',
+            });
+            renditionRef.current = rendition;
+
+            // Aplica tema e fonte
+            Object.entries(THEMES).forEach(([name, styles]) => rendition.themes.register(name, styles));
+            rendition.themes.select(theme);
+            rendition.themes.fontSize(`${FONT_SIZES[fontSizeIdx]}px`);
+
+            book.ready.then(async () => {
+                if (cancelled) return;
+                setLoading(false);
+
+                // Título
+                const meta = await book.loaded.metadata;
+                setTitulo(meta.title || 'Livro');
+
+                // TOC
+                const nav = await book.loaded.navigation;
+                setToc(nav.toc || []);
+
+                // Carrega anotações existentes e retoma posição
+                try {
+                    const res = await api.get(`/documents/${id}/annotations`);
+                    const data = res.data || {};
+                    annotationsRef.current = {
+                        bookmarks: data.bookmarks || [],
+                        notes: data.notes || {},
+                        highlights: data.highlights || {},
+                    };
+                    const cfi = data.lastCfi;
+                    if (cfi) await rendition.display(cfi);
+                    else await rendition.display();
+                } catch {
                     await rendition.display();
                 }
-            } catch {
-                await rendition.display();
-            }
-        });
+            });
 
-        // Atualiza capítulo e progresso ao mudar página
-        rendition.on('relocated', (location) => {
-            const cfi = location.start.cfi;
-            const pct = Math.round(book.locations.percentageFromCfi(cfi) * 100) || 0;
-            setProgress(pct);
-            setCurrentChapter(location.start.href || '');
-            saveProgress(cfi, pct);
-        });
+            // Atualiza capítulo e progresso ao mudar página
+            rendition.on('relocated', (location) => {
+                const cfi = location.start.cfi;
+                const pct = Math.round(book.locations.percentageFromCfi(cfi) * 100) || 0;
+                setProgress(pct);
+                setCurrentChapter(location.start.href || '');
+                saveProgress(cfi, pct);
+            });
 
-        // Gera locations para cálculo de progresso
-        book.ready.then(() => book.locations.generate(1024));
+            // Gera locations para cálculo de progresso
+            book.ready.then(() => book.locations.generate(1024));
 
-        // Navegação por teclado
-        const onKey = (e) => {
-            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') renditionRef.current?.next();
-            if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   renditionRef.current?.prev();
+            // Navegação por teclado
+            onKey = (e) => {
+                if (e.key === 'ArrowRight' || e.key === 'ArrowDown') renditionRef.current?.next();
+                if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   renditionRef.current?.prev();
+            };
+            window.addEventListener('keydown', onKey);
+
+            book.on('openFailed', () => {
+                if (!cancelled) { setLoading(false); setError('Não foi possível abrir o arquivo EPUB.'); }
+            });
         };
-        window.addEventListener('keydown', onKey);
 
-        book.on('openFailed', () => {
-            setLoading(false);
-            setError('Não foi possível abrir o arquivo EPUB.');
-        });
+        init();
 
         return () => {
-            window.removeEventListener('keydown', onKey);
-            book.destroy();
+            cancelled = true;
+            if (onKey) window.removeEventListener('keydown', onKey);
+            if (book) book.destroy();
         };
     }, [id]);
 
