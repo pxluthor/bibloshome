@@ -87,6 +87,7 @@ const DocumentList = () => {
     const isAdmin = localStorage.getItem('isAdmin') === 'true';
     const searchDebounceRef = useRef(null);
     const filterEffectMounted = useRef(false);
+    const searchEffectMounted = useRef(false); // guard separado para o debounce de busca
 
     // --- CÁLCULO DE POSIÇÃO DO MENU DE COLEÇÃO ---
     const calcMenuPos = (btnRect) => {
@@ -117,12 +118,13 @@ const DocumentList = () => {
         }
     }, [selectedGenre, selectedTag, selectedArea]);
 
-    // Debounce de busca
+    // Debounce de busca — pula o mount inicial (fetchInitialData já carregou)
     useEffect(() => {
+        if (!searchEffectMounted.current) { searchEffectMounted.current = true; return; }
         if (viewMode !== 'all') return;
         clearTimeout(searchDebounceRef.current);
         searchDebounceRef.current = setTimeout(() => {
-            setCurrentPage(1); // reset síncrono ANTES do fetch
+            setCurrentPage(1);
             fetchDocuments(1, searchTerm, selectedGenre, selectedTag, selectedArea, false);
         }, 400);
         return () => clearTimeout(searchDebounceRef.current);
