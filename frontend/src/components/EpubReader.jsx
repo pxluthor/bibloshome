@@ -35,12 +35,17 @@ export default function EpubReader() {
     const epubUrl = `${api.defaults.baseURL}/documents/${id}/epub`;
     const token = localStorage.getItem('token');
 
-    // Salva progresso no backend
+    // Cache local das anotações para não sobrescrever bookmarks/notes ao salvar progresso
+    const annotationsRef = useRef({ bookmarks: [], notes: {}, highlights: {} });
+
+    // Salva progresso no backend — mesmo formato do PDFReader (usePDFAnnotations)
     const saveProgress = useCallback(async (cfi, pct) => {
         try {
             await api.post(`/documents/${id}/annotations`, {
-                tipo: 'progresso',
-                dados_json: { lastCfi: cfi, progressPct: pct, totalPages: 100, lastPage: Math.round(pct) },
+                ...annotationsRef.current,
+                lastPage: Math.round(pct),   // % como "página" (0-100)
+                totalPages: 100,
+                lastCfi: cfi,                // posição exata no EPUB
             });
         } catch { /* silencia */ }
     }, [id]);
@@ -76,11 +81,17 @@ export default function EpubReader() {
             const nav = await book.loaded.navigation;
             setToc(nav.toc || []);
 
-            // Retoma progresso salvo
+            // Carrega anotações existentes (preserva bookmarks/notes) e retoma posição
             try {
                 const res = await api.get(`/documents/${id}/annotations`);
-                const prog = res.data?.find?.(a => a.tipo === 'progresso');
-                const cfi = prog?.dados_json?.lastCfi;
+                const data = res.data || {};
+                // Guarda no ref para não sobrescrever ao salvar progresso
+                annotationsRef.current = {
+                    bookmarks: data.bookmarks || [],
+                    notes: data.notes || {},
+                    highlights: data.highlights || {},
+                };
+                const cfi = data.lastCfi;
                 if (cfi) {
                     await rendition.display(cfi);
                 } else {
