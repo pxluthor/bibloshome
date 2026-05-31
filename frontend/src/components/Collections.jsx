@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Library, FolderOpen, Trash2, Edit2, Check, X, BookOpen, Loader2 } from 'lucide-react';
 import api from '../services/api';
@@ -174,28 +175,7 @@ const Collections = () => {
                                         </div>
                                     )}
 
-                                    {/* Confirmação de delete */}
-                                    {deleteConfirmId === col.id && (
-                                        <div className="absolute top-full left-0 mt-2 z-30 bg-white border border-red-200 rounded-xl shadow-xl p-4 w-64">
-                                            <p className="text-sm text-gray-800 font-medium mb-3">
-                                                Deletar "{col.nome}"? Esta ação não pode ser desfeita.
-                                            </p>
-                                            <div className="flex gap-2">
-                                                <button
-                                                    onClick={() => deleteCollection(col.id)}
-                                                    className="flex-1 px-3 py-1.5 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700"
-                                                >
-                                                    Deletar
-                                                </button>
-                                                <button
-                                                    onClick={() => setDeleteConfirmId(null)}
-                                                    className="flex-1 px-3 py-1.5 border border-gray-200 text-sm font-semibold rounded-lg hover:bg-gray-50"
-                                                >
-                                                    Cancelar
-                                                </button>
-                                            </div>
-                                        </div>
-                                    )}
+                                    {/* Confirmação de delete — renderizada via portal para não sair da tela */}
                                 </div>
                             ))}
                         </div>
@@ -231,10 +211,10 @@ const Collections = () => {
                                                 >
                                                     <BookOpen size={14} />
                                                 </button>
-                                                {/* Botão remover */}
+                                                {/* Botão remover — sempre visível no mobile, hover no desktop */}
                                                 <button
                                                     onClick={e => { e.stopPropagation(); removeBook(selectedId, livro.id); }}
-                                                    className="absolute top-1.5 right-1.5 h-7 w-7 rounded-full bg-red-600 text-white flex items-center justify-center opacity-0 group-hover/book:opacity-100 transition-all hover:bg-red-700 shadow"
+                                                    className="absolute top-1.5 right-1.5 h-7 w-7 rounded-full bg-red-600 text-white flex items-center justify-center sm:opacity-0 sm:group-hover/book:opacity-100 transition-all hover:bg-red-700 shadow"
                                                     title="Remover da coleção"
                                                 >
                                                     <X size={13} />
@@ -251,6 +231,39 @@ const Collections = () => {
                     </>
                 )}
             </main>
+
+            {/* Modal de confirmação de exclusão — centralizado, não sai da tela */}
+            {deleteConfirmId !== null && createPortal(
+                <div
+                    className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+                    onClick={() => setDeleteConfirmId(null)}
+                >
+                    <div
+                        className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6"
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <h3 className="font-bold text-gray-900 text-base mb-2">Excluir coleção?</h3>
+                        <p className="text-sm text-gray-600 mb-5">
+                            "{collections.find(c => c.id === deleteConfirmId)?.nome}" será excluída permanentemente. Esta ação não pode ser desfeita.
+                        </p>
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => deleteCollection(deleteConfirmId)}
+                                className="flex-1 py-2.5 bg-red-600 text-white text-sm font-semibold rounded-xl hover:bg-red-700 transition"
+                            >
+                                Excluir
+                            </button>
+                            <button
+                                onClick={() => setDeleteConfirmId(null)}
+                                className="flex-1 py-2.5 border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-50 transition"
+                            >
+                                Cancelar
+                            </button>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
         </div>
     );
 };
