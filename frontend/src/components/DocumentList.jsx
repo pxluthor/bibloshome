@@ -111,7 +111,10 @@ const DocumentList = () => {
     // Filtros mudaram: re-fetch (pula primeiro render — fetchInitialData já carregou)
     useEffect(() => {
         if (!filterEffectMounted.current) { filterEffectMounted.current = true; return; }
-        if (viewMode === 'all') fetchDocuments(1, searchTerm, selectedGenre, selectedTag, selectedArea, false);
+        if (viewMode === 'all') {
+            setCurrentPage(1); // reset síncrono ANTES do fetch para o observer não pular páginas
+            fetchDocuments(1, searchTerm, selectedGenre, selectedTag, selectedArea, false);
+        }
     }, [selectedGenre, selectedTag, selectedArea]);
 
     // Debounce de busca
@@ -119,6 +122,7 @@ const DocumentList = () => {
         if (viewMode !== 'all') return;
         clearTimeout(searchDebounceRef.current);
         searchDebounceRef.current = setTimeout(() => {
+            setCurrentPage(1); // reset síncrono ANTES do fetch
             fetchDocuments(1, searchTerm, selectedGenre, selectedTag, selectedArea, false);
         }, 400);
         return () => clearTimeout(searchDebounceRef.current);
