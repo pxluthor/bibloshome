@@ -519,6 +519,7 @@ def delete_collection(
     items = session.exec(select(ColecaoLivroItem).where(ColecaoLivroItem.colecao_id == collection_id)).all()
     for item in items:
         session.delete(item)
+    session.flush()  # garante que itens são deletados antes da coleção (FK constraint MySQL)
     session.delete(collection)
     session.commit()
     return {"message": "Colecao deletada", "status": "success"}

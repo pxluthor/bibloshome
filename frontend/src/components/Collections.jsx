@@ -57,9 +57,12 @@ const Collections = () => {
             setCollections(updated);
             setDeleteConfirmId(null);
             if (selectedId === id) setSelectedId(updated[0]?.id ?? null);
+            toast.success('Coleção excluída com sucesso.');
         } catch (error) {
-            console.error('Erro ao deletar:', error);
-            toast.error('Erro ao deletar coleção.');
+            const status = error?.response?.status ?? 'sem resposta';
+            const detail = error?.response?.data?.detail ?? error?.message ?? 'erro desconhecido';
+            console.error('Erro ao deletar coleção:', status, detail, error);
+            toast.error(`Erro ${status}: ${detail}`);
         }
     };
 
