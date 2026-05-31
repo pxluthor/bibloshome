@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { Library, FolderOpen, Trash2, Edit2, Check, X, BookOpen, Loader2 } from 'lucide-react';
+import { FolderOpen, Trash2, Edit2, Check, X, BookOpen, Loader2 } from 'lucide-react';
 import api from '../services/api';
-import UserMenu from './UserMenu';
+import AppHeader from './AppHeader';
 import { toast } from '../utils/toast';
 
 const Collections = () => {
@@ -97,20 +97,7 @@ const Collections = () => {
 
     return (
         <div className="min-h-screen bg-gray-50 font-sans">
-            {/* HEADER — igual ao DocumentList */}
-            <header className="bg-white shadow-sm sticky top-0 z-20">
-                <div className="max-w-7xl mx-auto px-4 h-20 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                        <div className="bg-blue-600 text-white p-2 rounded-lg cursor-pointer" onClick={() => navigate('/')}>
-                            <Library size={24} />
-                        </div>
-                        <h1 className="text-xl font-bold tracking-tight cursor-pointer" onClick={() => navigate('/')}>
-                            Library<span className="text-green-600">Anywhere</span>
-                        </h1>
-                    </div>
-                    <UserMenu userName={userName} isAdmin={isAdmin} pedidosPendentes={0} adminPendentes={0} />
-                </div>
-            </header>
+            <AppHeader userName={userName} isAdmin={isAdmin} />
 
             <main className="max-w-7xl mx-auto px-4 py-8">
                 <h2 className="text-2xl font-bold text-gray-900 mb-6">Minhas Coleções</h2>
