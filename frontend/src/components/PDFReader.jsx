@@ -78,12 +78,12 @@ const PDFReader = () => {
     const initializedRef = useRef(false);
     const selectionAudioRef = useRef(null);
 
-    // MEMOIZAÇÃO DO PDF - Evita recarregamento ao trocar abas ou redimensionar
-    const pdfFile = useMemo(() => ({
-        url: `${api.defaults.baseURL}/documents/${id}/file`,
-        httpHeaders: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-        withCredentials: true
-    }), [id]);
+    // Token na URL permite que o browser carregue o PDF nativamente com range requests (streaming)
+    // — evita que react-pdf baixe o arquivo inteiro via Fetch antes de renderizar a 1ª página
+    const pdfFile = useMemo(() => {
+        const token = localStorage.getItem('token');
+        return `${api.defaults.baseURL}/documents/${id}/file?token=${encodeURIComponent(token)}`;
+    }, [id]);
 
     const toggleFullscreen = () => {
         if (!document.fullscreenElement) {

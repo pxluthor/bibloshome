@@ -83,7 +83,7 @@ export const usePDFAnnotations = (docId) => {
         saveTimeoutRef.current = setTimeout(() => {
             sync(pendingRef.current);
             pendingRef.current = {};
-        }, 1000);
+        }, 3000);  // 3s — reduz saves ao navegar rapidamente
     };
 
     const updateTotalPages = (total) => {
@@ -93,7 +93,7 @@ export const usePDFAnnotations = (docId) => {
         saveTimeoutRef.current = setTimeout(() => {
             sync(pendingRef.current);
             pendingRef.current = {};
-        }, 1000);
+        }, 3000);
     };
 
     return { bookmarks, notes, highlights, isSaving, lastPage, totalPages, toggleBookmark, updateNote, addHighlight, removeHighlight, updateLastPage, updateTotalPages };

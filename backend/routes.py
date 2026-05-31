@@ -109,20 +109,48 @@ def list_documents(
 
     return {"items": [LivroRead.model_validate(i) for i in items], "total": total, "page": page, "limit": limit}
 
+def _get_user_from_token_or_header(
+    url_token: str = Query(default=None, alias="token"),
+    header_token: str = Depends(oauth2_scheme),
+    session: Session = Depends(get_session),
+) -> Usuario:
+    """Aceita JWT via query param ?token= (para range requests nativos do browser)
+    ou via header Authorization: Bearer (padrão da API)."""
+    from auth import SECRET_KEY, ALGORITHM
+    from jose import jwt, JWTError
+    raw = url_token or header_token
+    if not raw:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(raw, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if not email:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user = session.exec(select(Usuario).where(Usuario.email == email)).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
 @router.get("/documents/{doc_id}/file")
 def get_document_file(
     doc_id: int,
-    current_user: Usuario = Depends(get_current_user),
+    current_user: Usuario = Depends(_get_user_from_token_or_header),
     session: Session = Depends(get_session),
     pdf_service: PDFService = Depends(get_pdf_service)
 ):
     livro = session.get(Livro, doc_id)
     if not livro:
         raise HTTPException(status_code=404, detail="Document not found")
-    
-    # Assuming 'caminho' contains the filename
+
     file_path = pdf_service.get_file_path(livro.caminho)
-    return FileResponse(file_path, media_type="application/pdf", filename=livro.caminho)
+    return FileResponse(
+        file_path,
+        media_type="application/pdf",
+        filename=f"{livro.titulo or doc_id}.pdf",
+    )
 
 @router.get("/documents/{doc_id}/epub")
 def get_epub_file(
