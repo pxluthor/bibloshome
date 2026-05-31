@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
-    Search, BookOpen, Plus, ChevronLeft, ChevronRight,
+    Search, Library, ChevronLeft, ChevronRight,
     Filter, ChevronDown, LayoutGrid, List, Bookmark,
     FolderPlus,
 } from 'lucide-react';
@@ -364,7 +364,7 @@ const DocumentList = () => {
                                 className={`flex-1 flex items-center justify-center gap-1.5 px-2 sm:px-5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${viewMode === 'all' ? 'bg-blue-100 text-blue-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}
                                 title="Acervo Completo"
                             >
-                                <BookOpen size={15} className="flex-shrink-0" />
+                                <Library size={15} className="flex-shrink-0" />
                                 <span className="hidden sm:inline">Acervo Completo</span>
                             </button>
                             <button
