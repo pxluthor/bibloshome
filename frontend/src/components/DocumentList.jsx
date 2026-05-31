@@ -828,84 +828,14 @@ const DocumentList = () => {
                                                                 </div>
                                                             )}
 
-                                                            {/* Botões de ação */}
-                                                            <div className="flex gap-1 mt-0.5" onClick={(e) => e.stopPropagation()}>
-                                                                {isAdmin && (
-                                                                    <button
-                                                                        onClick={(e) => { e.stopPropagation(); navigate(`/edit-book/${doc.id}`); }}
-                                                                        className="h-7 w-7 bg-white/20 text-white rounded-lg hover:bg-white/40 border border-white/20 transition flex items-center justify-center flex-shrink-0"
-                                                                        title="Editar"
-                                                                    >
-                                                                        <Edit size={12} />
-                                                                    </button>
-                                                                )}
-
-                                                                {/* Trigger da coleção */}
-                                                                <button
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        if (collectionMenuDocId === doc.id) {
-                                                                            setCollectionMenuDocId(null);
-                                                                        } else {
-                                                                            const rect = e.currentTarget.getBoundingClientRect();
-                                                                            setCollectionMenuPos({ top: rect.bottom + 6, left: rect.left });
-                                                                            setCollectionMenuDocId(doc.id);
-                                                                        }
-                                                                    }}
-                                                                    className="h-7 w-7 bg-white/20 text-white rounded-lg hover:bg-white/40 border border-white/20 transition flex items-center justify-center flex-shrink-0"
-                                                                    title="Coleção"
-                                                                >
-                                                                    <FolderPlus size={12} />
-                                                                </button>
-
-                                                                {/* Detalhes (desktop hover, só se tiver sinopse) */}
-                                                                {doc.sinopse && (
-                                                                    <button
-                                                                        onClick={(e) => { e.stopPropagation(); setDetailsDoc(doc); }}
-                                                                        className="h-7 w-7 bg-white/20 text-white rounded-lg hover:bg-white/40 border border-white/20 transition flex items-center justify-center flex-shrink-0"
-                                                                        title="Detalhes"
-                                                                    >
-                                                                        <Info size={12} />
-                                                                    </button>
-                                                                )}
-
-                                                                {isInMyList ? (
-                                                                    <>
-                                                                        <button
-                                                                            onClick={(e) => { e.stopPropagation(); handleRead(doc.id); }}
-                                                                            className="flex-1 h-7 flex items-center justify-center gap-1 bg-green-500/80 text-white rounded-lg hover:bg-green-500 transition text-xs font-semibold"
-                                                                        >
-                                                                            <BookOpen size={11} />
-                                                                            {myListItem?.current_page > 1 ? 'Continuar' : 'Ler'}
-                                                                        </button>
-                                                                        <button
-                                                                            onClick={(e) => handleRemoveFromList(e, doc.id)}
-                                                                            disabled={actionLoading === doc.id}
-                                                                            className="h-7 w-7 bg-red-500/70 text-white rounded-lg hover:bg-red-500 transition flex items-center justify-center flex-shrink-0 disabled:opacity-50"
-                                                                        >
-                                                                            {actionLoading === doc.id ? <div className="animate-spin h-3 w-3 border-b-2 border-white rounded-full" /> : <Trash2 size={11} />}
-                                                                        </button>
-                                                                    </>
-                                                                ) : (
-                                                                    <button
-                                                                        onClick={(e) => handleAddToList(e, doc.id)}
-                                                                        disabled={actionLoading === doc.id}
-                                                                        className="flex-1 h-7 flex items-center justify-center gap-1 bg-blue-500/80 text-white rounded-lg hover:bg-blue-500 transition text-xs font-semibold disabled:opacity-50"
-                                                                    >
-                                                                        {actionLoading === doc.id ?
-                                                                            <div className="animate-spin h-3 w-3 border-b-2 border-white rounded-full" />
-                                                                            : <><Plus size={11} /> Salvar</>
-                                                                        }
-                                                                    </button>
-                                                                )}
-                                                            </div>
+                                                            {/* Botões removidos do hover — estão nos strips permanentes abaixo */}
                                                         </div>
                                                     </div>
 
                                                     {/* Dropdown coleção renderizado via portal — ver CollectionPortalMenu abaixo do return */}
 
-                                                    {/* Mobile: strip vertical direita — Coleção, Detalhes, Editar */}
-                                                    <div className="sm:hidden absolute right-1 top-1 flex flex-col gap-1">
+                                                    {/* Strip vertical direita — Coleção, Detalhes, Editar (todos os tamanhos) */}
+                                                    <div className="absolute right-1 top-1 flex flex-col gap-1 z-10">
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
@@ -942,8 +872,8 @@ const DocumentList = () => {
                                                         )}
                                                     </div>
 
-                                                    {/* Mobile: strip horizontal inferior — Ler + Salvar/Remover */}
-                                                    <div className="sm:hidden absolute bottom-0 left-0 right-0 flex rounded-b-xl overflow-hidden">
+                                                    {/* Strip horizontal inferior — Ler + Salvar/Remover (todos os tamanhos) */}
+                                                    <div className="absolute bottom-0 left-0 right-0 flex rounded-b-xl overflow-hidden z-10">
                                                         <button
                                                             onClick={(e) => { e.stopPropagation(); handleRead(doc.id); }}
                                                             className="flex-1 py-1.5 text-white text-[11px] font-semibold flex items-center justify-center gap-1 bg-black/65"
