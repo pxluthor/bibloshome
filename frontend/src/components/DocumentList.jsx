@@ -247,12 +247,33 @@ const DocumentList = () => {
     // AÇÕES
     // =========================================================
 
+    const refreshMyList = async () => {
+        const res = await api.get('/my-list').catch(() => ({ data: [] }));
+        const ids = new Set(), listData = {}, listBooks = [];
+        if (Array.isArray(res.data)) {
+            res.data.forEach(item => {
+                if (item.livro?.id) {
+                    ids.add(item.livro.id);
+                    listData[item.livro.id] = {
+                        status: item.status,
+                        current_page: item.current_page || 1,
+                        total_pages: item.total_pages,
+                    };
+                    listBooks.push(item.livro);
+                }
+            });
+        }
+        setMyListIds(ids);
+        setMyListData(listData);
+        setMyListBooks(listBooks);
+    };
+
     const handleAddToList = async (e, docId) => {
         e.stopPropagation();
         setActionLoading(docId);
         try {
             await api.post(`/my-list/add/${docId}`);
-            await fetchInitialData();
+            await refreshMyList(); // só atualiza a lista — não reseta documentos nem filtros
         } catch (err) {
             console.error('Erro ao adicionar:', err);
             toast.error('Erro ao adicionar livro.');
