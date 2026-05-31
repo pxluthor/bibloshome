@@ -27,6 +27,7 @@ export default function EpubReader() {
     const [tocOpen, setTocOpen] = useState(false);
     const [currentChapter, setCurrentChapter] = useState('');
     const [progress, setProgress] = useState(0);       // 0-100
+    const [pageInfo, setPageInfo] = useState('');       // "pág X / Y do capítulo"
     const [fontSizeIdx, setFontSizeIdx] = useState(1); // índice em FONT_SIZES
     const [theme, setTheme] = useState('light');
     const [loading, setLoading] = useState(true);
@@ -78,7 +79,9 @@ export default function EpubReader() {
             book = ePub(buffer);
             bookRef.current = book;
 
-            const w = viewerRef.current.clientWidth || window.innerWidth;
+            // Desconta os botões de navegação (48px cada lado) para evitar texto cortado
+            const btnW = window.innerWidth < 640 ? 48 : 64;
+            const w = (viewerRef.current.clientWidth || window.innerWidth) - btnW * 2;
             const h = viewerRef.current.clientHeight || window.innerHeight - 90;
 
             const rendition = book.renderTo(viewerRef.current, {
@@ -90,11 +93,18 @@ export default function EpubReader() {
             });
             renditionRef.current = rendition;
 
+            // Margens internas do conteúdo via tema
+            rendition.themes.default({
+                body: { margin: '0 !important', padding: '8px 32px !important' },
+                img: { 'max-width': '100% !important' },
+            });
+
             // Redimensiona quando a janela muda de tamanho
             onResize = () => {
                 if (!viewerRef.current) return;
+                const bw = window.innerWidth < 640 ? 48 : 64;
                 rendition.resize(
-                    viewerRef.current.clientWidth || window.innerWidth,
+                    (viewerRef.current.clientWidth || window.innerWidth) - bw * 2,
                     viewerRef.current.clientHeight || window.innerHeight - 90
                 );
             };
@@ -134,12 +144,19 @@ export default function EpubReader() {
                 }
             });
 
-            // Atualiza capítulo e progresso ao mudar página
+            // Atualiza capítulo, progresso e número de página ao navegar
             rendition.on('relocated', (location) => {
                 const cfi = location.start.cfi;
                 const pct = Math.round(book.locations.percentageFromCfi(cfi) * 100) || 0;
                 setProgress(pct);
                 setCurrentChapter(location.start.href || '');
+
+                // Página dentro do capítulo atual
+                const pg = location.start.displayed?.page;
+                const tot = location.start.displayed?.total;
+                if (pg && tot) setPageInfo(`Pág. ${pg} / ${tot} do capítulo`);
+                else setPageInfo('');
+
                 saveProgress(cfi, pct);
             });
 
@@ -318,7 +335,7 @@ export default function EpubReader() {
                 )}
                 <div
                     ref={viewerRef}
-                    className="flex-1 h-full px-12 sm:px-16"
+                    className="flex-1 h-full flex items-center justify-center overflow-hidden"
                     style={{ background: viewerBg }}
                 />
 
@@ -332,9 +349,11 @@ export default function EpubReader() {
                 </button>
             </div>
 
-            {/* Footer com progresso */}
-            <div className="flex items-center justify-center gap-3 px-4 py-1.5 border-t bg-white/80 backdrop-blur text-xs text-gray-400 flex-shrink-0">
-                <span>{progress}% concluído</span>
+            {/* Footer com página e progresso */}
+            <div className="flex items-center justify-center gap-4 px-4 py-1.5 border-t bg-white/80 backdrop-blur text-xs text-gray-400 flex-shrink-0">
+                {pageInfo && <span>{pageInfo}</span>}
+                {pageInfo && <span className="text-gray-300">·</span>}
+                <span>{progress}% do livro</span>
             </div>
         </div>
     );
