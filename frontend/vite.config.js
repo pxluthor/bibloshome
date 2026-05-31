@@ -22,13 +22,23 @@ export default defineConfig({
                 ],
             },
             workbox: {
-                skipWaiting: true,     // nova versão ativa imediatamente sem esperar aba fechar
-                clientsClaim: true,    // service worker assume controle de todas as abas abertas
+                skipWaiting: true,
+                clientsClaim: true,
+                // HTML fora do precache — SW nunca guarda index.html em cache
+                globPatterns: ['**/*.{js,css,ico,png,svg}'],
                 navigateFallback: '/index.html',
-                globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
-                // Não cachear chamadas à API
                 navigateFallbackDenylist: [/^\/api/, /^\/documents/],
                 runtimeCaching: [
+                    {
+                        // Navegação (F5, links) — sempre busca no servidor primeiro
+                        urlPattern: ({ request }) => request.mode === 'navigate',
+                        handler: 'NetworkFirst',
+                        options: {
+                            cacheName: 'html-cache',
+                            networkTimeoutSeconds: 3,
+                            expiration: { maxEntries: 5 },
+                        },
+                    },
                     {
                         // Capas dos livros — cache por 7 dias
                         urlPattern: /\/documents\/\d+\/cover/,
