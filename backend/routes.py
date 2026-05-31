@@ -9,7 +9,7 @@ from datetime import datetime
 from database import get_session
 from models import Usuario, UsuarioCreate, UsuarioLogin, ListaLeitura, ListaLeituraUpdate, ColecaoLivro, ColecaoLivroItem, ColecaoLivroCreate, Livro, Anotacao, AnotacaoUpdate, LivroRead, LivroUpdate, PedidoLivro, PedidoLivroCreate, PedidoLivroUpdate
 from services import get_pdf_service, get_translation_service, PDFService, TranslationService
-from auth import get_password_hash, verify_password, create_access_token, get_current_user
+from auth import get_password_hash, verify_password, create_access_token, get_current_user, oauth2_scheme
 
 router = APIRouter()
 
