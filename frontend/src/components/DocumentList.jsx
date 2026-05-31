@@ -205,7 +205,7 @@ const DocumentList = () => {
         if (!sentinelRef.current) return;
         const observer = new IntersectionObserver(
             (entries) => {
-                if (entries[0].isIntersecting && hasMore && !isLoadingMore && !loading) {
+                if (entries[0].isIntersecting && hasMore && !isLoadingMore && !loading && !listLoading) {
                     const nextPage = currentPage + 1;
                     setCurrentPage(nextPage);
                     fetchDocuments(nextPage, searchTerm, selectedGenre, selectedTag, selectedArea, true);
@@ -215,7 +215,7 @@ const DocumentList = () => {
         );
         observer.observe(sentinelRef.current);
         return () => observer.disconnect();
-    }, [hasMore, isLoadingMore, loading, currentPage, searchTerm, selectedGenre, selectedTag, selectedArea, viewMode]);
+    }, [hasMore, isLoadingMore, loading, listLoading, currentPage, searchTerm, selectedGenre, selectedTag, selectedArea, viewMode]);
 
     const fetchInitialData = async () => {
         // Fase 1: conteudo principal — desbloqueia a UI o mais rapido possivel
@@ -297,7 +297,7 @@ const DocumentList = () => {
                 setDocuments(prev => [...prev, ...newItems]);
             } else {
                 setDocuments(newItems);
-                setCurrentPage(1);
+                // NÃO reseta currentPage aqui — é responsabilidade dos useEffects de filtro
             }
             setTotalItems(total);
             setHasMore(page * itemsPerPage < total);
