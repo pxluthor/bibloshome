@@ -144,6 +144,18 @@ const DocumentList = () => {
     const [detailsDoc, setDetailsDoc] = useState(null); // livro selecionado para modal de detalhes
     const [collectionMenuDocId, setCollectionMenuDocId] = useState(null);
     const [collectionMenuPos, setCollectionMenuPos] = useState({ top: 0, left: 0 });
+
+    // Calcula posição do menu de coleção — abre para cima se não couber abaixo
+    const calcMenuPos = (btnRect) => {
+        const MENU_H = 340;
+        const MENU_W = 288;
+        const spaceBelow = window.innerHeight - btnRect.bottom;
+        const top = spaceBelow >= MENU_H
+            ? btnRect.bottom + 6
+            : Math.max(8, btnRect.top - MENU_H - 6);
+        const left = Math.min(Math.max(8, btnRect.right - MENU_W), window.innerWidth - MENU_W - 8);
+        return { top, left };
+    };
     const [collectionName, setCollectionName] = useState("");
     const [collectionLoading, setCollectionLoading] = useState(null);
 
@@ -425,7 +437,7 @@ const DocumentList = () => {
                         setCollectionMenuDocId(null);
                     } else {
                         const rect = e.currentTarget.getBoundingClientRect();
-                        setCollectionMenuPos({ top: rect.bottom + 6, left: rect.right - 288 });
+                        setCollectionMenuPos(calcMenuPos(rect));
                         setCollectionMenuDocId(docId);
                     }
                 }}
@@ -843,7 +855,7 @@ const DocumentList = () => {
                                                                     setCollectionMenuDocId(null);
                                                                 } else {
                                                                     const rect = e.currentTarget.getBoundingClientRect();
-                                                                    setCollectionMenuPos({ top: rect.bottom + 6, left: rect.right - 288 });
+                                                                    setCollectionMenuPos(calcMenuPos(rect));
                                                                     setCollectionMenuDocId(doc.id);
                                                                 }
                                                             }}
@@ -1147,7 +1159,7 @@ const DocumentList = () => {
                     />
                     <div
                         className="fixed z-[9999] w-72 bg-white border border-gray-200 rounded-lg shadow-xl p-3 text-left"
-                        style={{ top: collectionMenuPos.top, left: Math.min(Math.max(8, collectionMenuPos.left), window.innerWidth - 296) }}
+                        style={{ top: collectionMenuPos.top, left: collectionMenuPos.left }}
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="text-sm font-semibold text-gray-900 mb-2">Adicionar a coleção</div>
