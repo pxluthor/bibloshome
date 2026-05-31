@@ -2,7 +2,7 @@
 from typing import Optional, Dict, Any, List
 from sqlmodel import Field, SQLModel
 from datetime import datetime
-from sqlalchemy import Column, JSON, UniqueConstraint
+from sqlalchemy import Column, JSON, UniqueConstraint, LargeBinary
 
 class Livro(SQLModel, table=True):
     __tablename__ = "livros"
@@ -18,7 +18,7 @@ class Livro(SQLModel, table=True):
     paginas: Optional[int]
     sinopse: Optional[str]
     caminho: Optional[str] = Field(default=None, max_length=1000)
-    capa: Optional[bytes]  = Field(default=None)
+    capa: Optional[bytes]  = Field(default=None, sa_column=Column(LargeBinary(length=16777215)))  # MEDIUMBLOB
     data_adicao: Optional[datetime] = Field(default_factory=datetime.utcnow)
     tags: Optional[List] = Field(default=None, sa_column=Column(JSON))
 
