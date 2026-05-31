@@ -559,6 +559,48 @@ def remove_book_from_collection(
     session.commit()
     return {"message": "Livro removido da colecao", "status": "success"}
 
+@router.patch("/documents/{doc_id}/toggle-duplicate")
+def toggle_duplicate(
+    doc_id: int,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Marca ou desmarca um livro como duplicado (apenas admin)."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+    livro = session.get(Livro, doc_id)
+    if not livro:
+        raise HTTPException(status_code=404, detail="Livro não encontrado")
+    livro.is_duplicate = not livro.is_duplicate
+    session.add(livro)
+    session.commit()
+    return {"id": livro.id, "is_duplicate": livro.is_duplicate}
+
+
+@router.delete("/documents/marked-duplicates")
+def delete_marked_duplicates(
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Exclui permanentemente todos os livros marcados como duplicados (apenas admin)."""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Acesso negado.")
+    duplicates = session.exec(select(Livro).where(Livro.is_duplicate == True)).all()
+    if not duplicates:
+        return {"excluidos": 0, "message": "Nenhum duplicado marcado"}
+    ids = [l.id for l in duplicates]
+    # Limpar FKs antes de deletar
+    for table_class in [ListaLeitura, Anotacao, ColecaoLivroItem]:
+        items = session.exec(select(table_class).where(table_class.livro_id.in_(ids))).all()
+        for item in items:
+            session.delete(item)
+    session.flush()
+    for livro in duplicates:
+        session.delete(livro)
+    session.commit()
+    return {"excluidos": len(ids), "message": f"{len(ids)} livros duplicados excluídos"}
+
+
 @router.get("/documents/{doc_id}/cover")
 def get_cover(doc_id: int, session: Session = Depends(get_session)):
     livro = session.get(Livro, doc_id)

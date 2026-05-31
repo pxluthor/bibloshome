@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, ArrowLeft, Database, Loader2, Search, ChevronRight, ChevronDown, Folder, FolderOpen } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Database, Loader2, Search, ChevronRight, ChevronDown, Folder, FolderOpen, Flag, Trash2 } from 'lucide-react';
 import api from '../services/api';
 
 const tabs = [
@@ -8,6 +8,7 @@ const tabs = [
     { id: 'sincronizar', label: 'Sincronizar' },
     { id: 'capas', label: 'Gerar Capas' },
     { id: 'mover', label: 'Mover Livro' },
+    { id: 'duplicados', label: 'Duplicados' },
 ];
 
 const getErrorMessage = (err) => (
@@ -634,6 +635,97 @@ const AdminBd = () => {
         </div>
     );
 
+    // ── TAB DUPLICADOS ────────────────────────────────────────
+    const DuplicadosTab = () => {
+        const [dupes, setDupes] = useState(null);
+        const [loading, setLoading] = useState(true);
+        const [deleting, setDeleting] = useState(false);
+        const [result, setResult] = useState(null);
+
+        useEffect(() => {
+            api.get('/documents', { params: { limit: 100, page: 1 } })
+                .then(() => {}) // warm up
+                .catch(() => {});
+            // Busca todos os marcados como duplicados
+            const fetchDupes = async () => {
+                try {
+                    // Busca em todas as páginas livros com is_duplicate=true
+                    let all = [], page = 1, hasMore = true;
+                    while (hasMore) {
+                        const r = await api.get('/documents', { params: { page, limit: 100 } });
+                        const items = r.data.items || [];
+                        all = [...all, ...items.filter(d => d.is_duplicate)];
+                        hasMore = page * 100 < r.data.total;
+                        page++;
+                    }
+                    setDupes(all);
+                } catch { setDupes([]); } finally { setLoading(false); }
+            };
+            fetchDupes();
+        }, [result]);
+
+        const handleDelete = async () => {
+            if (!window.confirm(`Excluir permanentemente ${dupes.length} livros marcados como duplicados?`)) return;
+            setDeleting(true);
+            try {
+                const r = await api.delete('/documents/marked-duplicates');
+                setResult(r.data);
+            } catch (e) {
+                setError(getErrorMessage(e));
+            } finally { setDeleting(false); }
+        };
+
+        if (loading) return <div className="flex justify-center py-16"><Loader2 className="animate-spin text-purple-600" size={32} /></div>;
+
+        return (
+            <div className="space-y-4">
+                <div className="rounded-xl border bg-white p-5">
+                    <div className="flex items-center justify-between mb-4">
+                        <div>
+                            <h2 className="font-semibold text-gray-900 flex items-center gap-2">
+                                <Flag size={18} className="text-red-500" />
+                                Livros marcados como duplicados
+                            </h2>
+                            <p className="text-sm text-gray-500 mt-0.5">
+                                {dupes.length === 0 ? 'Nenhum livro marcado.' : `${dupes.length} livro(s) marcado(s) para exclusão.`}
+                            </p>
+                        </div>
+                        {dupes.length > 0 && (
+                            <button
+                                onClick={handleDelete}
+                                disabled={deleting}
+                                className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-red-700 disabled:opacity-50 transition"
+                            >
+                                {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                                Excluir {dupes.length} duplicado(s)
+                            </button>
+                        )}
+                    </div>
+
+                    {result && (
+                        <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">
+                            ✅ {result.excluidos} livro(s) excluído(s) com sucesso.
+                        </div>
+                    )}
+
+                    {dupes.length > 0 && (
+                        <div className="divide-y divide-gray-100 max-h-[60vh] overflow-y-auto">
+                            {dupes.map(d => (
+                                <div key={d.id} className="flex items-center gap-3 py-2.5">
+                                    <Flag size={14} className="text-red-500 flex-shrink-0" />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium text-gray-900 truncate">{d.titulo || '(sem título)'}</p>
+                                        <p className="text-xs text-gray-400 truncate">{d.caminho}</p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    };
+
     return (
         <div className="min-h-screen bg-gray-50">
             <header className="border-b bg-white px-6 py-4">
@@ -678,6 +770,7 @@ const AdminBd = () => {
                 {activeTab === 'sincronizar' && renderSincronizar()}
                 {activeTab === 'capas' && renderCapas()}
                 {activeTab === 'mover' && renderMover()}
+                {activeTab === 'duplicados' && <DuplicadosTab />}
             </main>
         </div>
     );

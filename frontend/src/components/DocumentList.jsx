@@ -277,6 +277,21 @@ const DocumentList = () => {
         navigate(`/document/${docId}`);
     };
 
+    const handleToggleDuplicate = async (docId) => {
+        try {
+            const res = await api.patch(`/documents/${docId}/toggle-duplicate`);
+            const { is_duplicate } = res.data;
+            // Atualiza localmente sem refetch
+            setDocuments(prev => prev.map(d => d.id === docId ? { ...d, is_duplicate } : d));
+            setMyListBooks(prev => prev.map(d => d.id === docId ? { ...d, is_duplicate } : d));
+            toast[is_duplicate ? 'error' : 'success'](
+                is_duplicate ? 'Marcado como duplicado' : 'Desmarcado'
+            );
+        } catch (err) {
+            toast.error('Erro ao marcar duplicado.');
+        }
+    };
+
     const handleCollectionClick = (e, docId) => {
         e.stopPropagation();
         if (collectionMenuDocId === docId) { setCollectionMenuDocId(null); return; }
@@ -487,6 +502,7 @@ const DocumentList = () => {
                                                 onRemoveFromList={handleRemoveFromList}
                                                 onCollectionClick={handleCollectionClick}
                                                 onDetailsClick={setDetailsDoc}
+                                                onToggleDuplicate={handleToggleDuplicate}
                                                 apiBaseUrl={apiBaseUrl}
                                                 getGradient={getGradient}
                                             />
@@ -507,6 +523,7 @@ const DocumentList = () => {
                                                 onAddToList={handleAddToList}
                                                 onRemoveFromList={handleRemoveFromList}
                                                 onCollectionClick={handleCollectionClick}
+                                                onToggleDuplicate={handleToggleDuplicate}
                                                 apiBaseUrl={apiBaseUrl}
                                                 getGradient={getGradient}
                                             />

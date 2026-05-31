@@ -21,6 +21,7 @@ class Livro(SQLModel, table=True):
     capa: Optional[bytes]  = Field(default=None, sa_column=Column(LargeBinary(length=16777215)))  # MEDIUMBLOB
     data_adicao: Optional[datetime] = Field(default_factory=datetime.utcnow)
     tags: Optional[List] = Field(default=None, sa_column=Column(JSON))
+    is_duplicate: bool = Field(default=False)
 
 class LivroRead(SQLModel):
     id: int
@@ -35,6 +36,7 @@ class LivroRead(SQLModel):
     sinopse: Optional[str]
     caminho: Optional[str]
     tags: Optional[List] = None
+    is_duplicate: bool = False
 
 class LivroUpdate(SQLModel):
     titulo: Optional[str] = None

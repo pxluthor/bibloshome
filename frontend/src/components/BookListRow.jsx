@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BookOpen, Plus, Trash2, FolderPlus, Edit } from 'lucide-react';
+import { BookOpen, Plus, Trash2, FolderPlus, Edit, Flag } from 'lucide-react';
 
 /** Tooltip CSS-only — aparece no hover de botões com class group/btn */
 const Tooltip = ({ label }) => (
@@ -29,6 +29,7 @@ export default function BookListRow({
     onAddToList,
     onRemoveFromList,
     onCollectionClick,
+    onToggleDuplicate,
     apiBaseUrl,
     getGradient,
 }) {
@@ -36,7 +37,9 @@ export default function BookListRow({
 
     return (
         <div
-            className="bg-white rounded-lg shadow-sm hover:shadow-md transition-all border border-gray-100 flex items-center gap-4 group animate-fade-in-up"
+            className={`rounded-lg shadow-sm hover:shadow-md transition-all border flex items-center gap-4 group animate-fade-in-up ${
+                doc.is_duplicate ? 'bg-red-50 border-red-200' : 'bg-white border-gray-100'
+            }`}
             style={{ animationDelay }}
         >
             {/* Capa mini */}
@@ -58,7 +61,14 @@ export default function BookListRow({
 
             {/* Informações */}
             <div className="flex-1 min-w-0">
-                <h3 className="font-bold text-gray-900 text-sm sm:text-base truncate">{doc.titulo}</h3>
+                <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-gray-900 text-sm sm:text-base truncate">{doc.titulo}</h3>
+                    {doc.is_duplicate && (
+                        <span className="flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 uppercase">
+                            Duplicado
+                        </span>
+                    )}
+                </div>
                 <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5 text-xs sm:text-sm text-gray-600 mt-0.5">
                     <span className="truncate max-w-[120px] sm:max-w-none">{doc.autor || 'Autor Desconhecido'}</span>
                     <span className="text-gray-300 hidden sm:inline">•</span>
@@ -99,6 +109,20 @@ export default function BookListRow({
                     >
                         <Edit size={14} />
                         <Tooltip label="Editar livro" />
+                    </button>
+                )}
+                {isAdmin && (
+                    <button
+                        onClick={() => onToggleDuplicate(doc.id)}
+                        className={`${iconTooltipClass} h-9 w-9 rounded-lg border transition flex items-center justify-center flex-shrink-0 ${
+                            doc.is_duplicate
+                                ? 'bg-red-600 text-white border-red-600'
+                                : 'bg-white text-gray-400 border-gray-200 hover:bg-red-50 hover:text-red-500 hover:border-red-200'
+                        }`}
+                        aria-label={doc.is_duplicate ? 'Desmarcar duplicado' : 'Marcar como duplicado'}
+                    >
+                        <Flag size={14} />
+                        <Tooltip label={doc.is_duplicate ? 'Desmarcar duplicado' : 'Marcar como duplicado'} />
                     </button>
                 )}
 

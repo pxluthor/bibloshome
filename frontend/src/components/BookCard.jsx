@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BookOpen, Plus, Trash2, FolderPlus, Info, Edit, Calendar, Tag } from 'lucide-react';
+import { BookOpen, Plus, Trash2, FolderPlus, Info, Edit, Calendar, Tag, Flag } from 'lucide-react';
 
 /**
  * Card no modo grade (aspect-[2/3]).
@@ -19,6 +19,7 @@ export default function BookCard({
     onRemoveFromList,
     onCollectionClick,
     onDetailsClick,
+    onToggleDuplicate,
     apiBaseUrl,
     getGradient,
 }) {
@@ -50,7 +51,16 @@ export default function BookCard({
                     <h3 className="text-white font-bold text-sm drop-shadow leading-tight">{doc.titulo}</h3>
                 </div>
 
-                {/* Hover overlay */}
+                {/* Overlay de duplicado */}
+            {doc.is_duplicate && (
+                <div className="absolute inset-0 bg-red-600/40 flex items-start justify-center pt-3 z-10 pointer-events-none rounded-xl">
+                    <span className="bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide shadow">
+                        Duplicado
+                    </span>
+                </div>
+            )}
+
+            {/* Hover overlay */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/55 to-black/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-2.5">
                     <h3 className="text-white font-bold text-xs leading-tight line-clamp-2 mb-0.5">{doc.titulo}</h3>
                     <p className="text-gray-300 text-xs mb-1.5 line-clamp-1">{doc.autor || 'Autor Desconhecido'}</p>
@@ -109,6 +119,19 @@ export default function BookCard({
                         title="Editar"
                     >
                         <Edit size={13} />
+                    </button>
+                )}
+                {isAdmin && (
+                    <button
+                        onClick={e => { e.stopPropagation(); onToggleDuplicate(doc.id); }}
+                        className={`w-8 h-8 rounded-lg flex items-center justify-center transition ${
+                            doc.is_duplicate
+                                ? 'bg-red-600 text-white'
+                                : 'bg-black/40 text-white/70 hover:bg-red-600/80 hover:text-white'
+                        }`}
+                        title={doc.is_duplicate ? 'Desmarcar duplicado' : 'Marcar como duplicado'}
+                    >
+                        <Flag size={13} />
                     </button>
                 )}
             </div>
