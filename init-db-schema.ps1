@@ -26,4 +26,16 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 ENDSQL
 "@
 
+docker exec bibloshome-backend python -c @"
+from database import engine
+from sqlalchemy import text, inspect
+insp = inspect(engine)
+existing = [i['name'] for i in insp.get_indexes('livros')]
+with engine.connect() as conn:
+    if 'idx_area'         not in existing: conn.execute(text('CREATE INDEX idx_area ON livros (area(100))')); print('idx_area criado')
+    if 'idx_genero'       not in existing: conn.execute(text('CREATE INDEX idx_genero ON livros (genero(50))')); print('idx_genero criado')
+    if 'idx_is_duplicate' not in existing: conn.execute(text('CREATE INDEX idx_is_duplicate ON livros (is_duplicate)')); print('idx_is_duplicate criado')
+    conn.commit()
+"@ 2>$null
+
 Write-Host "Schema atualizado!" -ForegroundColor Green
