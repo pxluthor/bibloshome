@@ -1,6 +1,6 @@
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Body, Response, Query
+from fastapi import APIRouter, Depends, HTTPException, Body, Response, Query, Header
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select, func
 from sqlalchemy import or_, func as sa_func
@@ -110,14 +110,21 @@ def list_documents(
     return {"items": [LivroRead.model_validate(i) for i in items], "total": total, "page": page, "limit": limit}
 
 def _get_user_from_token_or_header(
-    url_token: str = Query(default=None, alias="token"),
-    header_token: str = Depends(oauth2_scheme),
+    url_token: Optional[str] = Query(default=None, alias="token"),
+    authorization: Optional[str] = Header(default=None),
     session: Session = Depends(get_session),
 ) -> Usuario:
     """Aceita JWT via query param ?token= (para range requests nativos do browser)
-    ou via header Authorization: Bearer (padrão da API)."""
+    ou via header Authorization: Bearer (padrão da API).
+    O OAuth2PasswordBearer padrão exige header obrigatório — aqui os dois são opcionais."""
     from auth import SECRET_KEY, ALGORITHM
     from jose import jwt, JWTError
+
+    # Extrai token: prioriza query param (range requests do browser não enviam headers)
+    header_token = None
+    if authorization and authorization.startswith("Bearer "):
+        header_token = authorization[7:]
+
     raw = url_token or header_token
     if not raw:
         raise HTTPException(status_code=401, detail="Not authenticated")
