@@ -22,7 +22,8 @@ export default defineConfig({
                 ],
             },
             workbox: {
-                // Cache das páginas do app
+                skipWaiting: true,     // nova versão ativa imediatamente sem esperar aba fechar
+                clientsClaim: true,    // service worker assume controle de todas as abas abertas
                 navigateFallback: '/index.html',
                 globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
                 // Não cachear chamadas à API
