@@ -73,16 +73,27 @@ export const usePDFAnnotations = (docId) => {
         sync({ highlights: next });
     };
 
+    // Acumula lastPage e totalPages pendentes para enviar em um único save
+    const pendingRef = useRef({});
+
     const updateLastPage = (page) => {
         setLastPage(page);
+        pendingRef.current.lastPage = page;
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = setTimeout(() => sync({ lastPage: page }), 1000);
+        saveTimeoutRef.current = setTimeout(() => {
+            sync(pendingRef.current);
+            pendingRef.current = {};
+        }, 1000);
     };
 
     const updateTotalPages = (total) => {
         setTotalPages(total);
+        pendingRef.current.totalPages = total;
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-        saveTimeoutRef.current = setTimeout(() => sync({ totalPages: total }), 1000);
+        saveTimeoutRef.current = setTimeout(() => {
+            sync(pendingRef.current);
+            pendingRef.current = {};
+        }, 1000);
     };
 
     return { bookmarks, notes, highlights, isSaving, lastPage, totalPages, toggleBookmark, updateNote, addHighlight, removeHighlight, updateLastPage, updateTotalPages };
