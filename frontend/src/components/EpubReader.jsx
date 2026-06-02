@@ -38,17 +38,24 @@ export default function EpubReader() {
 
     // Cache local das anotações para não sobrescrever bookmarks/notes ao salvar progresso
     const annotationsRef = useRef({ bookmarks: [], notes: {}, highlights: {} });
+    const saveTimerRef = useRef(null);
+    const pendingSaveRef = useRef(null);
 
-    // Salva progresso no backend — mesmo formato do PDFReader (usePDFAnnotations)
-    const saveProgress = useCallback(async (cfi, pct) => {
-        try {
-            await api.post(`/documents/${id}/annotations`, {
-                ...annotationsRef.current,
-                lastPage: Math.round(pct),   // % como "página" (0-100)
-                totalPages: 100,
-                lastCfi: cfi,                // posição exata no EPUB
-            });
-        } catch { /* silencia */ }
+    // Salva progresso com debounce de 3s — relocated dispara várias vezes ao navegar
+    const saveProgress = useCallback((cfi, pct) => {
+        pendingSaveRef.current = { cfi, pct };
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = setTimeout(async () => {
+            const { cfi: c, pct: p } = pendingSaveRef.current;
+            try {
+                await api.post(`/documents/${id}/annotations`, {
+                    ...annotationsRef.current,
+                    lastPage: Math.round(p),
+                    totalPages: 100,
+                    lastCfi: c,
+                });
+            } catch { /* silencia */ }
+        }, 3000); // 3s — mesmo padrão do PDFReader
     }, [id]);
 
     useEffect(() => {
@@ -181,6 +188,7 @@ export default function EpubReader() {
             cancelled = true;
             if (onKey) window.removeEventListener('keydown', onKey);
             if (onResize) window.removeEventListener('resize', onResize);
+            if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
             if (book) book.destroy();
         };
     }, [id]);
