@@ -462,6 +462,76 @@ def move_book(
     }
 
 
+# ── GERENCIAMENTO DE USUÁRIOS ──────────────────────────────────────────────────
+
+@router.get('/users')
+def list_users(
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _require_admin(current_user)
+    users = session.exec(select(Usuario).order_by(Usuario.created_at)).all()
+    return [
+        {
+            'id': u.id,
+            'nome': u.nome,
+            'email': u.email,
+            'is_admin': u.is_admin,
+            'created_at': u.created_at,
+        }
+        for u in users
+    ]
+
+
+@router.patch('/users/{user_id}/toggle-admin')
+def toggle_admin(
+    user_id: int,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _require_admin(current_user)
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail='Voce nao pode alterar seu proprio admin status')
+    user = session.get(Usuario, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail='Usuário não encontrado')
+    user.is_admin = not user.is_admin
+    session.add(user)
+    session.commit()
+    return {'id': user.id, 'nome': user.nome, 'is_admin': user.is_admin}
+
+
+@router.delete('/users/{user_id}')
+def delete_user(
+    user_id: int,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _require_admin(current_user)
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail='Voce nao pode excluir sua propria conta')
+    user = session.get(Usuario, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail='Usuário não encontrado')
+    # Limpa dados do usuário antes de excluir
+    from models import ListaLeitura, Anotacao, ColecaoLivro, ColecaoLivroItem, EstudioArtefato, UsuarioAISettings
+    for model_class in [ListaLeitura, Anotacao, EstudioArtefato, UsuarioAISettings]:
+        items = session.exec(select(model_class).where(model_class.usuario_id == user_id)).all()
+        for item in items:
+            session.delete(item)
+    # Coleções: remove itens e depois a coleção
+    cols = session.exec(select(ColecaoLivro).where(ColecaoLivro.usuario_id == user_id)).all()
+    for col in cols:
+        col_items = session.exec(select(ColecaoLivroItem).where(ColecaoLivroItem.colecao_id == col.id)).all()
+        for ci in col_items:
+            session.delete(ci)
+        session.delete(col)
+    session.flush()
+    session.delete(user)
+    session.commit()
+    return {'message': f'Usuário {user.nome} excluído com sucesso'}
+
+
 @router.post('/remove-password/{livro_id}')
 def remove_pdf_password(
     livro_id: int,

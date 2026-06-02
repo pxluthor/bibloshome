@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, ArrowLeft, Database, Loader2, Search, ChevronRight, ChevronDown, Folder, FolderOpen, Flag, Trash2 } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Database, Loader2, Search, ChevronRight, ChevronDown, Folder, FolderOpen, Flag, Trash2, Users, ShieldCheck, ShieldOff } from 'lucide-react';
 import api from '../services/api';
 
 const tabs = [
@@ -9,6 +9,7 @@ const tabs = [
     { id: 'capas', label: 'Gerar Capas' },
     { id: 'mover', label: 'Mover Livro' },
     { id: 'duplicados', label: 'Duplicados' },
+    { id: 'usuarios', label: 'Usuários' },
 ];
 
 const getErrorMessage = (err) => (
@@ -726,6 +727,109 @@ const AdminBd = () => {
         );
     };
 
+    // ── TAB USUÁRIOS ──────────────────────────────────────────────────────────
+    const UsuariosTab = () => {
+        const [users, setUsers] = useState(null);
+        const [loading, setLoading] = useState(true);
+        const [acting, setActing] = useState(null); // id do user em ação
+
+        const fetchUsers = async () => {
+            setLoading(true);
+            try {
+                const r = await api.get('/admin/bd/users');
+                setUsers(r.data);
+            } catch { setError('Erro ao carregar usuários.'); }
+            finally { setLoading(false); }
+        };
+
+        useEffect(() => { fetchUsers(); }, []);
+
+        const handleToggleAdmin = async (user) => {
+            const acao = user.is_admin ? 'remover admin de' : 'tornar admin';
+            if (!window.confirm(`${acao} ${user.nome}?`)) return;
+            setActing(user.id);
+            try {
+                const r = await api.patch(`/admin/bd/users/${user.id}/toggle-admin`);
+                setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_admin: r.data.is_admin } : u));
+            } catch (e) { setError(getErrorMessage(e)); }
+            finally { setActing(null); }
+        };
+
+        const handleDelete = async (user) => {
+            if (!window.confirm(`Excluir permanentemente o usuário ${user.nome} (${user.email})? Todos os dados serão removidos.`)) return;
+            setActing(user.id);
+            try {
+                await api.delete(`/admin/bd/users/${user.id}`);
+                setUsers(prev => prev.filter(u => u.id !== user.id));
+            } catch (e) { setError(getErrorMessage(e)); }
+            finally { setActing(null); }
+        };
+
+        if (loading) return <div className="flex justify-center py-16"><Loader2 className="animate-spin text-purple-600" size={32} /></div>;
+
+        return (
+            <div className="space-y-4">
+                <div className="rounded-xl border bg-white p-5">
+                    <h2 className="font-semibold text-gray-900 flex items-center gap-2 mb-4">
+                        <Users size={18} className="text-purple-600" />
+                        Usuários cadastrados
+                        <span className="ml-1 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{users?.length}</span>
+                    </h2>
+
+                    <div className="divide-y divide-gray-100">
+                        {users?.map(user => (
+                            <div key={user.id} className="flex items-center gap-3 py-3">
+                                {/* Avatar */}
+                                <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0 ${user.is_admin ? 'bg-purple-600' : 'bg-blue-500'}`}>
+                                    {user.nome.charAt(0).toUpperCase()}
+                                </div>
+
+                                {/* Info */}
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                        <p className="text-sm font-medium text-gray-900 truncate">{user.nome}</p>
+                                        {user.is_admin && (
+                                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 uppercase flex-shrink-0">
+                                                Admin
+                                            </span>
+                                        )}
+                                    </div>
+                                    <p className="text-xs text-gray-400 truncate">{user.email}</p>
+                                </div>
+
+                                {/* Ações */}
+                                <div className="flex items-center gap-1.5 flex-shrink-0">
+                                    <button
+                                        onClick={() => handleToggleAdmin(user)}
+                                        disabled={acting === user.id}
+                                        title={user.is_admin ? 'Remover admin' : 'Tornar admin'}
+                                        className={`p-1.5 rounded-lg transition ${
+                                            user.is_admin
+                                                ? 'text-purple-600 hover:bg-purple-50'
+                                                : 'text-gray-400 hover:bg-gray-100 hover:text-purple-600'
+                                        }`}
+                                    >
+                                        {acting === user.id
+                                            ? <Loader2 size={16} className="animate-spin" />
+                                            : user.is_admin ? <ShieldOff size={16} /> : <ShieldCheck size={16} />}
+                                    </button>
+                                    <button
+                                        onClick={() => handleDelete(user)}
+                                        disabled={acting === user.id}
+                                        title="Excluir usuário"
+                                        className="p-1.5 rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 transition"
+                                    >
+                                        <Trash2 size={16} />
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
     return (
         <div className="min-h-screen bg-gray-50">
             <header className="border-b bg-white px-6 py-4">
@@ -771,6 +875,7 @@ const AdminBd = () => {
                 {activeTab === 'capas' && renderCapas()}
                 {activeTab === 'mover' && renderMover()}
                 {activeTab === 'duplicados' && <DuplicadosTab />}
+                {activeTab === 'usuarios' && <UsuariosTab />}
             </main>
         </div>
     );
