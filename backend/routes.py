@@ -186,14 +186,10 @@ def get_book_details(
     current_user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    """Retorna detalhes completos de um livro (para edição)"""
+    """Retorna detalhes completos de um livro. Admin vê o caminho; outros usuários veem os metadados."""
     livro = session.get(Livro, doc_id)
     if not livro:
         raise HTTPException(status_code=404, detail="Livro não encontrado")
-    
-    # Apenas admin pode ver detalhes completos
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Acesso negado. Apenas administradores.")
     
     return LivroRead.model_validate(livro)
 
