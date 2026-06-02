@@ -213,7 +213,20 @@ async def auto_fill_metadata(
         web_snippets = await search_web_for_book(search_query)
         fonte = "Web Search"
 
-    # 3. Monta prompt com os resultados para o LLM sintetizar
+    # 3. Monta mapeamento direto dos dados estruturados (alta confiança)
+    best = results[0] if results else {}
+    direct_data = {}
+    if best.get("editora"):   direct_data["editora"]  = best["editora"]
+    if best.get("ano"):       direct_data["ano"]       = int(best["ano"])
+    if best.get("idioma"):    direct_data["idioma"]    = best["idioma"]
+    if best.get("paginas"):   direct_data["paginas"]   = best["paginas"]
+    if paginas_arquivo:       direct_data["paginas"]   = paginas_arquivo  # arquivo real tem prioridade
+    if best.get("sinopse"):   direct_data["sinopse"]   = best["sinopse"]
+    autores = best.get("autores", [])
+    if autores:               direct_data["autor"]     = ", ".join(autores)
+    if best.get("titulo"):    direct_data["titulo"]    = best["titulo"]
+
+    # Monta prompt: dados estruturados confiáveis + contexto de busca
     if results:
         results_text = json.dumps(results, ensure_ascii=False, indent=2)
         context_section = f"Resultados da busca ({fonte}):\n{results_text}"
@@ -222,9 +235,18 @@ async def auto_fill_metadata(
     else:
         context_section = "Nenhum resultado encontrado nas APIs."
 
+    # Dados já extraídos diretamente das APIs — LLM deve confirmar/corrigir e completar
+    direct_section = ""
+    if direct_data:
+        direct_section = (
+            "\n\nDados já extraídos com alta confiança (confirme ou corrija se necessário):\n"
+            + json.dumps(direct_data, ensure_ascii=False, indent=2)
+        )
+
     user_message = (
         f"Nome do arquivo: {search_query}\n\n"
         f"{context_section}"
+        f"{direct_section}"
     )
 
     debug_results = {
@@ -234,15 +256,16 @@ async def auto_fill_metadata(
         "web_snippets": web_snippets or None,
     }
 
-    # 4. Se LLM configurado e disponível, usa para síntese melhorada
-    #    Caso contrário, mapeia diretamente os dados das APIs (sem LLM)
-    use_llm = (
-        settings.provider == "openai" and settings.openai_api_key
-        # Ollama só se explicitamente configurado para não default
-    )
+    # 4. Tenta LLM sempre (Ollama ou OpenAI) — fallback para mapeamento direto só se falhar
+    if settings.provider == "openai" and not settings.openai_api_key:
+        llm_available = False
+    else:
+        llm_available = True
 
-    if use_llm:
-        model = settings.chat_model or OPENAI_DEFAULT_CHAT
+    if llm_available:
+        model = settings.chat_model or (
+            OPENAI_DEFAULT_CHAT if settings.provider == "openai" else OLLAMA_DEFAULT_CHAT
+        )
         provider = get_provider(settings.provider, settings.openai_api_key)
         full_response = ""
         try:
@@ -254,9 +277,9 @@ async def auto_fill_metadata(
             ):
                 full_response += (chunk or "")
         except Exception as e:
-            use_llm = False  # fallback para mapeamento direto
+            llm_available = False  # conexão falhou → fallback para mapeamento direto
 
-        if use_llm and full_response.strip():
+        if llm_available and full_response.strip():
             try:
                 clean = re.sub(r"```json\s*", "", full_response)
                 clean = re.sub(r"```\s*", "", clean).strip()
@@ -271,19 +294,15 @@ async def auto_fill_metadata(
                     metadata["paginas"] = paginas_arquivo
                 return metadata
             except json.JSONDecodeError:
-                pass  # fallback para mapeamento direto
+                pass  # JSON inválido → fallback para mapeamento direto
 
-    # 5. Mapeamento direto dos resultados da API (sem LLM)
-    best = results[0] if results else {}
-    titulo_limpo = best.get("titulo") or search_query
+    # 5. Fallback: mapeamento direto (LLM indisponível ou retornou JSON inválido)
+    #    Usa os dados estruturados já calculados em direct_data
+    titulo_limpo = direct_data.get("titulo") or search_query
     if best.get("subtitulo"):
-        titulo_limpo = f"{titulo_limpo}: {best.get('subtitulo')}"
-
-    autores = best.get("autores", [])
-    autor = ", ".join(autores) if autores else None
+        titulo_limpo = f"{titulo_limpo}: {best['subtitulo']}"
 
     categorias = best.get("categorias", [])
-    # Tenta mapear para o gênero padrão da biblioteca
     generos_map = {
         "history": "Historia", "literature": "Literatura", "science": "Ciencia e Tecnologia",
         "technology": "Ciencia e Tecnologia", "computers": "Ciencia e Tecnologia",
@@ -294,9 +313,8 @@ async def auto_fill_metadata(
     }
     genero = None
     for cat in categorias:
-        cat_lower = cat.lower()
         for key, val in generos_map.items():
-            if key in cat_lower:
+            if key in cat.lower():
                 genero = val
                 break
         if genero:
@@ -306,12 +324,12 @@ async def auto_fill_metadata(
 
     return {
         "titulo": titulo_limpo,
-        "autor": autor,
-        "editora": best.get("editora"),
-        "ano": int(best.get("ano")) if best.get("ano") else None,
-        "idioma": best.get("idioma"),
-        "paginas": paginas_arquivo or best.get("paginas"),  # arquivo real tem prioridade
-        "sinopse": best.get("sinopse"),
+        "autor": direct_data.get("autor"),
+        "editora": direct_data.get("editora"),
+        "ano": direct_data.get("ano"),
+        "idioma": direct_data.get("idioma"),
+        "paginas": direct_data.get("paginas"),
+        "sinopse": direct_data.get("sinopse"),
         "genero": genero,
         "tags": tags,
         "fonte": fonte,
