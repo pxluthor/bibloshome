@@ -34,6 +34,7 @@ const PDFReader = () => {
     const selectionTimeoutRef = useRef(null);
     const isResettingRef = useRef(false);
     const pdfDocRef = useRef(null);
+    const touchStartRef = useRef(null);
 
     const { sidebarWidth, isResizing, startResizing } = useSidebarResizer(400);
     const {
@@ -181,6 +182,44 @@ const PDFReader = () => {
 
     const goToPrevPage = () => setPageNumber(p => Math.max(1, isDoublePage ? p - 2 : p - 1));
     const goToNextPage = () => setPageNumber(p => Math.min(numPages || p, isDoublePage ? p + 2 : p + 1));
+
+    // Navegação por toque — detecta swipe horizontal E tap nas bordas
+    const handleTouchStart = (e) => {
+        // Não captura se o usuário tem texto selecionado
+        if (hasSelection) return;
+        touchStartRef.current = {
+            x: e.touches[0].clientX,
+            y: e.touches[0].clientY,
+            time: Date.now(),
+        };
+    };
+
+    const handleTouchEnd = (e) => {
+        if (!touchStartRef.current) return;
+        const touch = e.changedTouches[0];
+        const dx = touch.clientX - touchStartRef.current.x;
+        const dy = touch.clientY - touchStartRef.current.y;
+        const dt = Date.now() - touchStartRef.current.time;
+        const absDx = Math.abs(dx);
+        const absDy = Math.abs(dy);
+        touchStartRef.current = null;
+
+        // 1) Swipe horizontal: movimento > 50px, mais horizontal que vertical, < 400ms
+        if (absDx > 50 && absDx > absDy * 1.5 && dt < 400) {
+            if (dx < 0) goToNextPage(); // swipe ← = próxima
+            else goToPrevPage();         // swipe → = anterior
+            return;
+        }
+
+        // 2) Tap nas bordas: toque rápido (<250ms) com mínimo movimento (<12px)
+        // Zona esquerda (30%) = anterior | Zona direita (30%) = próxima
+        if (absDx < 12 && absDy < 12 && dt < 250) {
+            const W = window.innerWidth;
+            const zone = W * 0.30;
+            if (touch.clientX < zone) goToPrevPage();
+            else if (touch.clientX > W - zone) goToNextPage();
+        }
+    };
 
     // Suporte ao Teclado
     useEffect(() => {
@@ -620,10 +659,27 @@ const PDFReader = () => {
             )}
 
             <div className={`flex w-full h-full ${searchOpen ? 'pt-28' : 'pt-14'}`}>
-                <main ref={mainRef} className={`flex-1 bg-gray-600 overflow-auto p-4 flex justify-center select-text transition-all ${isResizing ? 'pointer-events-none' : ''} ${hasSelection ? 'selection-active' : ''}`}
+                <main ref={mainRef} className={`flex-1 bg-gray-600 overflow-auto p-4 flex justify-center select-text transition-all relative ${isResizing ? 'pointer-events-none' : ''} ${hasSelection ? 'selection-active' : ''}`}
                       style={{ touchAction: 'pan-y' }}
                       onScroll={() => setSelectionMenu(null)}
-                      onContextMenu={(e) => e.preventDefault()}>
+                      onContextMenu={(e) => e.preventDefault()}
+                      onTouchStart={handleTouchStart}
+                      onTouchEnd={handleTouchEnd}>
+                    {/* Zonas de tap visíveis só no toque — feedback ao pressionar */}
+                    {!isSidebarOpen && (
+                        <>
+                            <div className="absolute left-0 top-0 h-full w-[12%] z-10 pointer-events-none
+                                            flex items-center justify-start pl-1 opacity-0 active:opacity-100
+                                            bg-gradient-to-r from-black/20 to-transparent transition-opacity duration-100 select-none">
+                                <ChevronLeft size={28} className="text-white/60" />
+                            </div>
+                            <div className="absolute right-0 top-0 h-full w-[12%] z-10 pointer-events-none
+                                            flex items-center justify-end pr-1 opacity-0 active:opacity-100
+                                            bg-gradient-to-l from-black/20 to-transparent transition-opacity duration-100 select-none">
+                                <ChevronRight size={28} className="text-white/60" />
+                            </div>
+                        </>
+                    )}
                     {pdfError ? (
                         <div className="flex flex-col items-center justify-center h-full gap-4">
                             <p className="text-gray-300">Erro ao carregar o PDF. Tente reabrir o documento.</p>
