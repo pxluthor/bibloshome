@@ -42,11 +42,16 @@ class PDFService:
         return unique_candidates
 
     def get_file_path(self, filename: str) -> str:
+        biblioteca_abs = os.path.abspath(self.source_dir)
         for file_path in self._candidate_paths(filename):
-            if os.path.exists(file_path):
-                return file_path
+            resolved = os.path.realpath(file_path)
+            # Garante que o arquivo está dentro da biblioteca (evita path traversal)
+            if not (resolved.startswith(biblioteca_abs + os.sep) or resolved == biblioteca_abs):
+                continue
+            if os.path.exists(resolved):
+                return resolved
 
-        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+        raise HTTPException(status_code=404, detail="Arquivo não encontrado")
 
     def extract_text(self, file_path: str, page_number: int) -> str:
         """

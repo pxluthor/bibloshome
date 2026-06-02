@@ -1,5 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from routes import router
 from admin_bd_routes import router as admin_bd_router
 from ai_routes import router as ai_router
@@ -7,7 +10,10 @@ from ai_estudio_routes import router as ai_estudio_router
 from auto_metadata_routes import router as auto_metadata_router
 from database import create_db_and_tables
 
-app = FastAPI(title="PDF Translator API")
+limiter = Limiter(key_func=get_remote_address)
+app = FastAPI(title="BibliosHome API")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 #CORS Configuration
 origins = [
@@ -15,7 +21,7 @@ origins = [
     "http://localhost:3000",
     "https://library.pxluthor.com.br",
     "https://api-library.pxluthor.com.br",
-    "http://192.168.0.106:5171",
+    # IP LAN 192.168.0.106 removido — era origem de dev, não deve estar em produção
 ]
 
 

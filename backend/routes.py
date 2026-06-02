@@ -1,6 +1,9 @@
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Body, Response, Query, Header
+from fastapi import APIRouter, Depends, HTTPException, Body, Response, Query, Header, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+limiter = Limiter(key_func=get_remote_address)
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select, func
 from sqlalchemy import or_, func as sa_func
@@ -250,7 +253,8 @@ def translate_page(
 
 # --- 1. REGISTRO DE USUÁRIO ---
 @router.post("/auth/register", status_code=201)
-def register(user: UsuarioCreate, session: Session = Depends(get_session)):
+@limiter.limit("5/minute")
+def register(request: Request, user: UsuarioCreate, session: Session = Depends(get_session)):
     # Verifica se email já existe
     existing_user = session.exec(select(Usuario).where(Usuario.email == user.email)).first()
     if existing_user:
@@ -267,7 +271,8 @@ def register(user: UsuarioCreate, session: Session = Depends(get_session)):
 
 # --- 2. LOGIN (GERAR TOKEN) ---
 @router.post("/auth/login")
-def login(user_data: UsuarioLogin, session: Session = Depends(get_session)):
+@limiter.limit("10/minute")
+def login(request: Request, user_data: UsuarioLogin, session: Session = Depends(get_session)):
     # Busca usuário pelo email
     user = session.exec(select(Usuario).where(Usuario.email == user_data.email)).first()
     

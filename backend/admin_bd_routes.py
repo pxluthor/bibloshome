@@ -441,7 +441,7 @@ def move_book(
             os.rename(caminho_atual, novo_caminho)
         except OSError as exc:
             logger.exception('Falha ao mover arquivo %s para %s', caminho_atual, novo_caminho)
-            raise HTTPException(status_code=500, detail=f'Falha ao mover arquivo: {exc}') from exc
+            raise HTTPException(status_code=500, detail='Falha ao mover arquivo. Verifique permissões e espaço em disco.') from exc
     else:
         logger.warning('Arquivo nao encontrado no filesystem ao mover livro %s: %s', livro.id, caminho_atual)
 
