@@ -16,6 +16,7 @@ import AdminBd from './components/AdminBd';
 import Estudio from './components/Estudio';
 import Statistics from './components/Statistics';
 import EpubReader from './components/EpubReader';
+import SettingsPage from './components/SettingsPage';
 import Toaster from './components/Toaster';
 
 // --- COMPONENTE DE PROTEÇÃO (GUARDA) REFORMULADO ---
@@ -212,6 +213,13 @@ function App() {
                         <AdminRoute>
                             <AdminBd />
                         </AdminRoute>
+                    }
+                />
+
+                <Route
+                    path="/configuracoes"
+                    element={
+                        <PrivateRoute><SettingsPage /></PrivateRoute>
                     }
                 />
 

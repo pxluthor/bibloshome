@@ -108,9 +108,7 @@ const UserMenu = ({ userName, isAdmin, pedidosPendentes = 0, adminPendentes = 0 
                         )}
 
                         <button
-                            onClick={() => {
-                                setIsOpen(false);
-                            }}
+                            onClick={() => { navigate('/configuracoes'); setIsOpen(false); }}
                             className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition"
                         >
                             <Settings size={18} className="text-gray-500" />
