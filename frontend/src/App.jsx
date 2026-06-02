@@ -202,7 +202,7 @@ function App() {
                     path="/colecoes"
                     element={
                         <PrivateRoute>
-                            <Collections />
+                            <DocumentList />
                         </PrivateRoute>
                     }
                 />

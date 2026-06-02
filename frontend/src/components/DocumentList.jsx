@@ -3,8 +3,9 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
     Search, Library, ChevronLeft, ChevronRight,
     Filter, ChevronDown, LayoutGrid, List, Bookmark,
-    FolderPlus,
+    FolderPlus, BookOpen, Edit2, Trash2, Check, X,
 } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import api from '../services/api';
 import BookCardSkeleton from './BookCardSkeleton';
 import AppHeader from './AppHeader';
@@ -53,7 +54,12 @@ const DocumentList = () => {
 
     // --- FILTROS / NAVEGAÇÃO ---
     const location = useLocation();
-    const viewMode = location.pathname.startsWith('/meus-livros') ? 'my_list' : 'all';
+    const viewMode = location.pathname.startsWith('/meus-livros')
+        ? 'my_list'
+        : location.pathname.startsWith('/colecoes')
+            ? 'collections'
+            : 'all';
+    const [selectedCollectionId, setSelectedCollectionId] = useState(null);
     const [viewLayout, setViewLayout] = useState('grid');
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedGenre, setSelectedGenre] = useState(null);
@@ -77,6 +83,9 @@ const DocumentList = () => {
     const [collectionMenuPos, setCollectionMenuPos] = useState({ top: 0, left: 0 });
     const [collectionName, setCollectionName] = useState('');
     const [collectionLoading, setCollectionLoading] = useState(null);
+    const [renamingCollId, setRenamingCollId] = useState(null);
+    const [renameValue, setRenameValue] = useState('');
+    const [deleteConfirmCollId, setDeleteConfirmCollId] = useState(null);
 
     // --- PEDIDOS ---
     const [pedidosPendentes, setPedidosPendentes] = useState(0);
@@ -132,6 +141,13 @@ const DocumentList = () => {
 
     // Resetar página ao trocar aba
     useEffect(() => { setCurrentPage(1); }, [viewMode]);
+
+    // Seleciona primeira coleção automaticamente ao entrar na aba
+    useEffect(() => {
+        if (viewMode === 'collections' && collections.length > 0 && !selectedCollectionId) {
+            setSelectedCollectionId(collections[0].id);
+        }
+    }, [viewMode, collections]);
 
     // IntersectionObserver — scroll infinito (Acervo)
     useEffect(() => {
@@ -319,6 +335,40 @@ const DocumentList = () => {
         }
     };
 
+    // --- AÇÕES DE COLEÇÕES (view integrada) ---
+    const handleRenameCollection = async (id) => {
+        const nome = renameValue.trim();
+        if (!nome) return;
+        try {
+            await api.put(`/collections/${id}`, { nome });
+            setCollections(prev => prev.map(c => c.id === id ? { ...c, nome } : c));
+            setRenamingCollId(null);
+        } catch { toast.error('Erro ao renomear coleção.'); }
+    };
+
+    const handleDeleteCollection = async (id) => {
+        try {
+            await api.delete(`/collections/${id}`);
+            const updated = collections.filter(c => c.id !== id);
+            setCollections(updated);
+            setDeleteConfirmCollId(null);
+            if (selectedCollectionId === id) setSelectedCollectionId(updated[0]?.id ?? null);
+            toast.success('Coleção excluída.');
+        } catch (err) {
+            toast.error(err?.response?.data?.detail || 'Erro ao excluir coleção.');
+        }
+    };
+
+    const handleRemoveBookFromCollection = async (collId, livroId) => {
+        try {
+            await api.delete(`/collections/${collId}/books/${livroId}`);
+            setCollections(prev => prev.map(c => {
+                if (c.id !== collId) return c;
+                return { ...c, book_ids: c.book_ids.filter(id => id !== livroId), books: (c.books||[]).filter(b => b.id !== livroId), total_livros: Math.max((c.total_livros||0)-1,0) };
+            }));
+        } catch { toast.error('Erro ao remover livro.'); }
+    };
+
     const handleCollectionClick = (e, docId) => {
         e.stopPropagation();
         if (collectionMenuDocId === docId) { setCollectionMenuDocId(null); return; }
@@ -424,7 +474,7 @@ const DocumentList = () => {
                             </button>
                             <button
                                 onClick={() => navigate('/colecoes')}
-                                className="flex-1 flex items-center justify-center gap-1.5 px-2 sm:px-5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all text-gray-500 hover:bg-gray-50"
+                                className={`flex-1 flex items-center justify-center gap-1.5 px-2 sm:px-5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${viewMode === 'collections' ? 'bg-blue-100 text-blue-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}
                                 title="Coleções"
                             >
                                 <FolderPlus size={15} className="flex-shrink-0" />
@@ -493,8 +543,75 @@ const DocumentList = () => {
                     loading={loading}
                 />
 
-                {/* ── RESULTADOS ── */}
-                {(loading || listLoading) ? (
+                {/* ── VIEW DE COLEÇÕES ── */}
+                {viewMode === 'collections' && (
+                    <div>
+                        {/* Chips de coleções */}
+                        <div className="flex flex-wrap gap-2 mb-4">
+                            {collections.map(col => (
+                                <div key={col.id} className="relative">
+                                    {renamingCollId === col.id ? (
+                                        <div className="flex items-center gap-1 px-3 py-1.5 bg-white border border-blue-400 rounded-full shadow-sm">
+                                            <input value={renameValue} onChange={e => setRenameValue(e.target.value)}
+                                                onKeyDown={e => { if(e.key==='Enter') handleRenameCollection(col.id); if(e.key==='Escape') setRenamingCollId(null); }}
+                                                className="text-sm outline-none w-28" autoFocus />
+                                            <button onClick={() => handleRenameCollection(col.id)} className="text-green-600"><Check size={13}/></button>
+                                            <button onClick={() => setRenamingCollId(null)} className="text-gray-400"><X size={13}/></button>
+                                        </div>
+                                    ) : (
+                                        <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border cursor-pointer transition-all ${
+                                            selectedCollectionId === col.id
+                                                ? 'bg-blue-600 text-white border-blue-600 shadow-md'
+                                                : 'bg-white text-gray-700 border-gray-200 hover:border-blue-400'
+                                        }`}>
+                                            <span onClick={() => setSelectedCollectionId(col.id)}>{col.nome}</span>
+                                            <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${selectedCollectionId===col.id ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-600'}`}>{col.total_livros}</span>
+                                            <button onClick={e => { e.stopPropagation(); setRenamingCollId(col.id); setRenameValue(col.nome); }} className={`hover:opacity-70 ${selectedCollectionId===col.id?'text-white':'text-gray-400'}`}><Edit2 size={11}/></button>
+                                            <button onClick={e => { e.stopPropagation(); setDeleteConfirmCollId(col.id); }} className={`hover:opacity-70 ${selectedCollectionId===col.id?'text-white':'text-red-400'}`}><Trash2 size={11}/></button>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                            {collections.length === 0 && (
+                                <p className="text-sm text-gray-400 py-2">Nenhuma coleção criada. Adicione livros a coleções pelo acervo.</p>
+                            )}
+                        </div>
+
+                        {/* Grid de livros da coleção selecionada */}
+                        {selectedCollectionId && (() => {
+                            const col = collections.find(c => c.id === selectedCollectionId);
+                            const books = col?.books || [];
+                            if (books.length === 0) return (
+                                <div className="text-center py-16 text-gray-400">
+                                    <BookOpen className="mx-auto mb-3 opacity-40" size={40}/>
+                                    <p className="text-sm">Nenhum livro nesta coleção.</p>
+                                </div>
+                            );
+                            return (
+                                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
+                                    {books.map(livro => (
+                                        <div key={livro.id} className="relative group/book">
+                                            <div className="aspect-[2/3] overflow-hidden rounded-lg bg-gray-100 cursor-pointer relative"
+                                                onClick={() => handleRead(livro.id)}>
+                                                <img src={`${apiBaseUrl}/documents/${livro.id}/cover`} alt={livro.titulo}
+                                                    className="h-full w-full object-cover"
+                                                    onError={e => { e.currentTarget.style.display='none'; }} />
+                                                <div className="absolute inset-0 bg-black/0 group-hover/book:bg-black/40 transition-all" />
+                                                <button onClick={e => { e.stopPropagation(); handleRemoveBookFromCollection(selectedCollectionId, livro.id); }}
+                                                    className="absolute top-1.5 right-1.5 h-6 w-6 rounded-full bg-red-600 text-white items-center justify-center hidden group-hover/book:flex transition shadow"
+                                                    title="Remover da coleção"><X size={12}/></button>
+                                            </div>
+                                            <p className="mt-1 text-xs text-gray-700 truncate">{livro.titulo}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            );
+                        })()}
+                    </div>
+                )}
+
+                {/* ── RESULTADOS (Acervo / Meus Livros) ── */}
+                {viewMode !== 'collections' && ((loading || listLoading) ? (
                     <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-2 sm:gap-3">
                         {Array.from({ length: ITEMS_PER_PAGE }).map((_, i) => <BookCardSkeleton key={i} />)}
                     </div>
@@ -587,10 +704,25 @@ const DocumentList = () => {
                             </div>
                         )}
                     </>
-                )}
+                ))}
             </main>
 
             {/* ── MODAIS / PORTAIS ── */}
+            {/* Confirmação delete coleção (view integrada) */}
+            {deleteConfirmCollId !== null && createPortal(
+                <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+                    onClick={() => setDeleteConfirmCollId(null)}>
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+                        <h3 className="font-bold text-gray-900 text-base mb-2">Excluir coleção?</h3>
+                        <p className="text-sm text-gray-600 mb-5">"{collections.find(c=>c.id===deleteConfirmCollId)?.nome}" será excluída permanentemente.</p>
+                        <div className="flex gap-3">
+                            <button onClick={() => handleDeleteCollection(deleteConfirmCollId)} className="flex-1 py-2.5 bg-red-600 text-white text-sm font-semibold rounded-xl hover:bg-red-700 transition">Excluir</button>
+                            <button onClick={() => setDeleteConfirmCollId(null)} className="flex-1 py-2.5 border border-gray-200 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-50 transition">Cancelar</button>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
             {detailsDoc && (
                 <BookDetailsModal
                     doc={detailsDoc}
