@@ -460,3 +460,54 @@ def move_book(
         'caminho_novo': novo_caminho,
         'area_nova': area_nova,
     }
+
+
+@router.post('/remove-password/{livro_id}')
+def remove_pdf_password(
+    livro_id: int,
+    session: Session = Depends(get_session),
+    current_user: Usuario = Depends(get_current_user),
+    pdf_service=Depends(get_pdf_service),
+):
+    """Tenta remover a proteção por senha de um PDF.
+    Funciona para PDFs com senha vazia ou apenas restrições de cópia/impressão.
+    Sobrescreve o arquivo original sem criptografia."""
+    _require_admin(current_user)
+
+    import fitz  # PyMuPDF
+
+    livro = session.get(Livro, livro_id)
+    if not livro:
+        raise HTTPException(status_code=404, detail='Livro nao encontrado')
+    if not livro.caminho:
+        raise HTTPException(status_code=400, detail='Livro sem caminho cadastrado')
+
+    file_path = pdf_service.get_file_path(livro.caminho)
+
+    try:
+        doc = fitz.open(file_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'Nao foi possivel abrir o arquivo: {e}')
+
+    if not doc.needs_pass:
+        doc.close()
+        return {'status': 'ok', 'message': 'Este PDF nao esta protegido por senha'}
+
+    # Tenta senha vazia (comum em PDFs de bibliotecas digitais)
+    authenticated = doc.authenticate('')
+    if not authenticated:
+        doc.close()
+        raise HTTPException(
+            status_code=422,
+            detail='PDF protegido com senha nao-vazia. Nao e possivel remover sem a senha correta.'
+        )
+
+    # Salva sem criptografia, substituindo o original
+    try:
+        doc.save(file_path, encryption=fitz.PDF_ENCRYPT_NONE, incremental=False, deflate=True)
+    except Exception as e:
+        doc.close()
+        raise HTTPException(status_code=500, detail=f'Erro ao salvar PDF sem senha: {e}')
+
+    doc.close()
+    return {'status': 'ok', 'message': 'Senha removida com sucesso. O arquivo foi atualizado.'}

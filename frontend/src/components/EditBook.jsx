@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Save, Loader2, ChevronDown, X, Sparkles } from 'lucide-react';
+import { ArrowLeft, Save, Loader2, ChevronDown, X, Sparkles, LockOpen } from 'lucide-react';
 import api from '../services/api';
 import { toast } from '../utils/toast';
 
@@ -145,6 +145,22 @@ const EditBook = () => {
             ...prev,
             tags: prev.tags.filter(tag => tag !== tagToRemove)
         }));
+    };
+
+    const [removingPassword, setRemovingPassword] = useState(false);
+
+    const handleRemovePassword = async () => {
+        if (!window.confirm('Tentar remover a senha deste PDF? O arquivo original será substituído.')) return;
+        setRemovingPassword(true);
+        try {
+            const res = await api.post(`/admin/bd/remove-password/${id}`);
+            toast.success(res.data.message);
+        } catch (err) {
+            const detail = err?.response?.data?.detail || 'Erro ao remover senha.';
+            toast.error(detail);
+        } finally {
+            setRemovingPassword(false);
+        }
     };
 
     const handleSubmit = async (e) => {
@@ -524,7 +540,22 @@ const EditBook = () => {
                     </div>
 
                     {/* Botões */}
-                    <div className="mt-8 flex justify-end gap-4">
+                    <div className="mt-8 flex justify-between gap-4 flex-wrap">
+                        {/* Remover senha — só para PDFs */}
+                        {book.caminho?.toLowerCase().endsWith('.pdf') && (
+                            <button
+                                type="button"
+                                onClick={handleRemovePassword}
+                                disabled={removingPassword}
+                                className="px-4 py-3 border border-orange-300 text-orange-700 rounded-lg font-medium hover:bg-orange-50 transition flex items-center gap-2 disabled:opacity-50"
+                                title="Tenta remover a proteção por senha (funciona para senhas vazias)"
+                            >
+                                {removingPassword ? <Loader2 className="animate-spin h-4 w-4" /> : <LockOpen size={18} />}
+                                Remover Senha
+                            </button>
+                        )}
+
+                        <div className="flex gap-4 ml-auto">
                         <button
                             type="button"
                             onClick={() => navigate('/')}
@@ -549,6 +580,7 @@ const EditBook = () => {
                                 </>
                             )}
                         </button>
+                        </div>
                     </div>
                 </form>
             </div>

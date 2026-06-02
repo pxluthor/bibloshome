@@ -75,6 +75,7 @@ const PDFReader = () => {
     const [searchIdx, setSearchIdx] = useState(0);
     const [searchLoading, setSearchLoading] = useState(false);
     const [pdfError, setPdfError] = useState(false);
+    const [pdfPasswordProtected, setPdfPasswordProtected] = useState(false);
     const [pageVisible, setPageVisible] = useState(true);
     const initializedRef = useRef(false);
     const selectionAudioRef = useRef(null);
@@ -707,10 +708,15 @@ const PDFReader = () => {
                         file={pdfFile}
                         onLoadSuccess={(pdf) => {
                             setNumPages(pdf.numPages);
-                            updateTotalPages(pdf.numPages); // Salva o total de páginas no JSON de anotações
+                            updateTotalPages(pdf.numPages);
                             pdfDocRef.current = pdf;
                         }}
                         onLoadError={(error) => { console.error('PDF load error:', error); setPdfError(true); }}
+                        onPassword={() => {
+                            // PDF protegido por senha — exibe mensagem amigável em vez do prompt nativo do browser
+                            setPdfPasswordProtected(true);
+                            setPdfError(true);
+                        }}
                         loading={<div className="text-white mt-20 font-medium">A carregar biblioteca...</div>}
                     >
                         <div className={`flex gap-4 ${isDoublePage ? 'max-w-none' : 'max-w-4xl'}`} style={{ opacity: pageVisible ? 1 : 0, transition: 'opacity 0.2s ease-in' }}>
