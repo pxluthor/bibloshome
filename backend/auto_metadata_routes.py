@@ -11,6 +11,7 @@ from ai_routes import _get_user_settings
 from auth import get_current_user
 from database import get_session
 from models import Livro, Usuario, UsuarioAISettings
+from services import get_pdf_service
 
 router = APIRouter(prefix="/documents", tags=["Auto Metadata"])
 
@@ -145,11 +146,31 @@ Se os resultados de busca nao forem relevantes, infira os metadados a partir do 
 Responda APENAS com o JSON, sem nenhum texto adicional."""
 
 
+def _count_pages_from_file(file_path: str) -> int | None:
+    """Conta páginas do arquivo real — PDF via pdfplumber, EPUB via ebooklib."""
+    try:
+        if file_path.lower().endswith(".pdf"):
+            import pdfplumber
+            with pdfplumber.open(file_path) as pdf:
+                return len(pdf.pages)
+        if file_path.lower().endswith(".epub"):
+            from ebooklib import epub
+            book = epub.read_epub(file_path, options={"ignore_ncx": True})
+            # Aproximação: conta documentos de conteúdo (spine items)
+            items = [i for i in book.get_items() if i.get_type() == 9]  # ITEM_DOCUMENT
+            # Estima ~2 páginas por capítulo
+            return max(1, len(items) * 2) if items else None
+    except Exception:
+        pass
+    return None
+
+
 @router.post("/{doc_id}/auto-metadata")
 async def auto_fill_metadata(
     doc_id: int,
     current_user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
+    pdf_service=Depends(get_pdf_service),
 ):
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Apenas administradores podem usar esta feature")
@@ -165,6 +186,14 @@ async def auto_fill_metadata(
             status_code=400,
             detail="Chave OpenAI nao configurada. Configure nas configuracoes de IA ou mude para Ollama."
         )
+
+    # 0. Conta páginas do arquivo real (independente do LLM)
+    paginas_arquivo = None
+    try:
+        file_path = pdf_service.get_file_path(livro.caminho)
+        paginas_arquivo = _count_pages_from_file(file_path)
+    except Exception:
+        pass
 
     # 1. Extrai query limpa do filename
     search_query = extract_search_query(livro.caminho or livro.titulo or "")
@@ -205,42 +234,86 @@ async def auto_fill_metadata(
         "web_snippets": web_snippets or None,
     }
 
-    # 4. Chama o LLM configurado pelo usuario (Ollama ou OpenAI)
-    model = settings.chat_model or (
-        OPENAI_DEFAULT_CHAT if settings.provider == "openai" else OLLAMA_DEFAULT_CHAT
+    # 4. Se LLM configurado e disponível, usa para síntese melhorada
+    #    Caso contrário, mapeia diretamente os dados das APIs (sem LLM)
+    use_llm = (
+        settings.provider == "openai" and settings.openai_api_key
+        # Ollama só se explicitamente configurado para não default
     )
-    provider = get_provider(settings.provider, settings.openai_api_key)
 
-    full_response = ""
-    try:
-        async for chunk in provider.chat(
-            messages=[{"role": "user", "content": user_message}],
-            model=model,
-            system=SYSTEM_METADATA,
-            stream=False,
-        ):
-            full_response += (chunk or "")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao chamar LLM: {str(e)}")
+    if use_llm:
+        model = settings.chat_model or OPENAI_DEFAULT_CHAT
+        provider = get_provider(settings.provider, settings.openai_api_key)
+        full_response = ""
+        try:
+            async for chunk in provider.chat(
+                messages=[{"role": "user", "content": user_message}],
+                model=model,
+                system=SYSTEM_METADATA,
+                stream=False,
+            ):
+                full_response += (chunk or "")
+        except Exception as e:
+            use_llm = False  # fallback para mapeamento direto
 
-    if not full_response.strip():
-        raise HTTPException(status_code=500, detail="LLM nao retornou resposta")
+        if use_llm and full_response.strip():
+            try:
+                clean = re.sub(r"```json\s*", "", full_response)
+                clean = re.sub(r"```\s*", "", clean).strip()
+                match = re.search(r'\{.*\}', clean, re.DOTALL)
+                if match:
+                    clean = match.group(0)
+                metadata = json.loads(clean)
+                metadata["fonte"] = fonte
+                metadata["_debug"] = debug_results
+                # Páginas do arquivo real têm prioridade sobre estimativa do LLM
+                if paginas_arquivo:
+                    metadata["paginas"] = paginas_arquivo
+                return metadata
+            except json.JSONDecodeError:
+                pass  # fallback para mapeamento direto
 
-    # 5. Parse do JSON
-    try:
-        clean = re.sub(r"```json\s*", "", full_response)
-        clean = re.sub(r"```\s*", "", clean).strip()
-        # Extrai o JSON mesmo se houver texto antes/depois
-        match = re.search(r'\{.*\}', clean, re.DOTALL)
-        if match:
-            clean = match.group(0)
-        metadata = json.loads(clean)
-        metadata["fonte"] = fonte
-        metadata["_debug"] = debug_results
-    except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=500,
-            detail=f"LLM retornou formato invalido: {full_response[:300]}"
-        )
+    # 5. Mapeamento direto dos resultados da API (sem LLM)
+    best = results[0] if results else {}
+    titulo_limpo = best.get("titulo") or search_query
+    if best.get("subtitulo"):
+        titulo_limpo = f"{titulo_limpo}: {best.get('subtitulo')}"
 
-    return metadata
+    autores = best.get("autores", [])
+    autor = ", ".join(autores) if autores else None
+
+    categorias = best.get("categorias", [])
+    # Tenta mapear para o gênero padrão da biblioteca
+    generos_map = {
+        "history": "Historia", "literature": "Literatura", "science": "Ciencia e Tecnologia",
+        "technology": "Ciencia e Tecnologia", "computers": "Ciencia e Tecnologia",
+        "social": "Ciencias Sociais", "art": "Artes e Cultura", "philosophy": "Religiao e Filosofia",
+        "religion": "Religiao e Filosofia", "education": "Educacao", "health": "Saude e Medicina",
+        "medical": "Saude e Medicina", "law": "Direito", "business": "Negocios",
+        "economics": "Negocios", "fiction": "Literatura", "mathematics": "Ciencia e Tecnologia",
+    }
+    genero = None
+    for cat in categorias:
+        cat_lower = cat.lower()
+        for key, val in generos_map.items():
+            if key in cat_lower:
+                genero = val
+                break
+        if genero:
+            break
+
+    tags = [c.lower().split("/")[0].strip() for c in categorias[:6]] if categorias else []
+
+    return {
+        "titulo": titulo_limpo,
+        "autor": autor,
+        "editora": best.get("editora"),
+        "ano": int(best.get("ano")) if best.get("ano") else None,
+        "idioma": best.get("idioma"),
+        "paginas": paginas_arquivo or best.get("paginas"),  # arquivo real tem prioridade
+        "sinopse": best.get("sinopse"),
+        "genero": genero,
+        "tags": tags,
+        "fonte": fonte,
+        "_debug": debug_results,
+    }
