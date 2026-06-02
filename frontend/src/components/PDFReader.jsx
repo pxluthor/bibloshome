@@ -212,13 +212,27 @@ const PDFReader = () => {
         }
 
         // 2) Tap nas bordas: toque rápido (<250ms) com mínimo movimento (<12px)
-        // Zona esquerda (30%) = anterior | Zona direita (30%) = próxima
         if (absDx < 12 && absDy < 12 && dt < 250) {
-            const W = window.innerWidth;
-            const zone = W * 0.30;
-            if (touch.clientX < zone) goToPrevPage();
-            else if (touch.clientX > W - zone) goToNextPage();
+            navigateByX(touch.clientX);
         }
+    };
+
+    // Navegação por clique do mouse (PC) — mesma lógica das zonas de toque
+    const handleClick = (e) => {
+        if (hasSelection || isResizing) return;
+        // Ignora cliques em elementos interativos do PDF (links, botões)
+        if (e.target.closest('a, button, input, select, [role="button"]')) return;
+        navigateByX(e.clientX);
+    };
+
+    // Calcula zona de navegação relativa ao container do PDF (exclui sidebar)
+    const navigateByX = (clientX) => {
+        if (!mainRef.current) return;
+        const rect = mainRef.current.getBoundingClientRect();
+        const x = clientX - rect.left;
+        const zone = rect.width * 0.25; // 25% de cada lado
+        if (x < zone) goToPrevPage();
+        else if (x > rect.width - zone) goToNextPage();
     };
 
     // Suporte ao Teclado
@@ -664,22 +678,23 @@ const PDFReader = () => {
                       onScroll={() => setSelectionMenu(null)}
                       onContextMenu={(e) => e.preventDefault()}
                       onTouchStart={handleTouchStart}
-                      onTouchEnd={handleTouchEnd}>
-                    {/* Zonas de tap visíveis só no toque — feedback ao pressionar */}
-                    {!isSidebarOpen && (
-                        <>
-                            <div className="absolute left-0 top-0 h-full w-[12%] z-10 pointer-events-none
-                                            flex items-center justify-start pl-1 opacity-0 active:opacity-100
-                                            bg-gradient-to-r from-black/20 to-transparent transition-opacity duration-100 select-none">
-                                <ChevronLeft size={28} className="text-white/60" />
-                            </div>
-                            <div className="absolute right-0 top-0 h-full w-[12%] z-10 pointer-events-none
-                                            flex items-center justify-end pr-1 opacity-0 active:opacity-100
-                                            bg-gradient-to-l from-black/20 to-transparent transition-opacity duration-100 select-none">
-                                <ChevronRight size={28} className="text-white/60" />
-                            </div>
-                        </>
-                    )}
+                      onTouchEnd={handleTouchEnd}
+                      onClick={handleClick}>
+                    {/* Zonas de navegação — hover no PC, tap/swipe no mobile */}
+                    <div className="absolute left-0 top-0 h-full w-[25%] z-10 pointer-events-none
+                                    flex items-center justify-start pl-2
+                                    opacity-0 hover:opacity-100 active:opacity-100
+                                    bg-gradient-to-r from-black/15 to-transparent
+                                    transition-opacity duration-200 select-none">
+                        <ChevronLeft size={32} className="text-white/50 drop-shadow" />
+                    </div>
+                    <div className="absolute right-0 top-0 h-full w-[25%] z-10 pointer-events-none
+                                    flex items-center justify-end pr-2
+                                    opacity-0 hover:opacity-100 active:opacity-100
+                                    bg-gradient-to-l from-black/15 to-transparent
+                                    transition-opacity duration-200 select-none">
+                        <ChevronRight size={32} className="text-white/50 drop-shadow" />
+                    </div>
                     {pdfError ? (
                         <div className="flex flex-col items-center justify-center h-full gap-4">
                             <p className="text-gray-300">Erro ao carregar o PDF. Tente reabrir o documento.</p>
