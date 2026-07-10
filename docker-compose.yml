@@ -43,6 +43,10 @@ services:
       FOR_INSERT_DIR: /data/for_insert
     ports:
       - "8001:8001"
+      # Callbacks OAuth (Codex/Claude) — o navegador do host redireciona para
+      # localhost:1455/1456, que precisa alcançar o servidor de callback no container
+      - "1455:1455"
+      - "1456:1456"
     volumes:
       - ${BIBLIOTECA_HOST_DIR:-E:\BIBLIOTECA}:/data/biblioteca:rw
       - ${FOR_INSERT_HOST_DIR:-E:\for_insert}:/data/for_insert:rw

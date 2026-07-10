@@ -155,7 +155,8 @@ def _ensure_callback_server() -> None:
         if _callback_server is not None:
             return
         port = int(urlparse(CALLBACK_URL).port or 80)
-        server = HTTPServer(("localhost", port), _CodexCallbackHandler)
+        # 0.0.0.0 para ser alcançável via porta publicada quando o backend roda em Docker
+        server = HTTPServer(("0.0.0.0", port), _CodexCallbackHandler)
         _callback_server = server
         threading.Thread(target=server.serve_forever, daemon=True).start()
 
