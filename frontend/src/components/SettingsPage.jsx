@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Settings, Bot, Key, Check, Loader2, RefreshCw, ChevronDown } from 'lucide-react';
+import { ArrowLeft, Settings, Bot, Key, Check, Loader2, RefreshCw, ChevronDown, Link2, Link2Off, Zap, BarChart2 } from 'lucide-react';
 import api from '../services/api';
 import { toast } from '../utils/toast';
 import AppHeader from './AppHeader';
@@ -11,10 +11,10 @@ export default function SettingsPage() {
     const isAdmin   = localStorage.getItem('isAdmin') === 'true';
 
     // ── Estado dos providers / modelos ─────────────────────────────────────
-    const [providers, setProviders]     = useState(null);   // { ollama: {...}, openai: {...} }
+    const [providers, setProviders]     = useState(null);
     const [loadingProviders, setLoadingProviders] = useState(true);
 
-    // ── Estado do form ────────────────────────────────────────────────────
+    // ── Estado do form principal ──────────────────────────────────────────
     const [provider,  setProvider]  = useState('ollama');
     const [model,     setModel]     = useState('');
     const [apiKey,    setApiKey]    = useState('');
@@ -22,8 +22,20 @@ export default function SettingsPage() {
     const [saving,    setSaving]    = useState(false);
     const [loaded,    setLoaded]    = useState(false);
 
+    // ── Estado OAuth Codex ────────────────────────────────────────────────
+    const [codexConnecting, setCodexConnecting] = useState(false);
+    const [codexUsage, setCodexUsage]           = useState(null);
+    const [codexUsageLoading, setCodexUsageLoading] = useState(false);
+    const [codexModel, setCodexModel]           = useState('gpt-5.5');
+
+    // ── Estado OAuth Claude ───────────────────────────────────────────────
+    const [claudeConnecting, setClaudeConnecting] = useState(false);
+    const [claudeUsage, setClaudeUsage]           = useState(null);
+    const [claudeUsageLoading, setClaudeUsageLoading] = useState(false);
+    const [claudeModel, setClaudeModel]           = useState('claude-sonnet-5');
+
     // ── Carrega providers + settings atuais ───────────────────────────────
-    const fetchAll = async () => {
+    const fetchAll = useCallback(async () => {
         setLoadingProviders(true);
         try {
             const [provRes, settRes] = await Promise.all([
@@ -31,8 +43,12 @@ export default function SettingsPage() {
                 api.get('/ai/settings'),
             ]);
             setProviders(provRes.data);
-            setProvider(settRes.data.provider  || 'ollama');
-            setModel(settRes.data.chat_model    || '');
+            const activeProvider = settRes.data.provider || 'ollama';
+            const activeModel = settRes.data.chat_model || '';
+            setProvider(activeProvider);
+            setModel(activeModel);
+            if (activeProvider === 'codex' && activeModel) setCodexModel(activeModel);
+            if (activeProvider === 'claude' && activeModel) setClaudeModel(activeModel);
             setHasApiKey(settRes.data.has_openai_key || false);
             setLoaded(true);
         } catch {
@@ -40,9 +56,9 @@ export default function SettingsPage() {
         } finally {
             setLoadingProviders(false);
         }
-    };
+    }, []);
 
-    useEffect(() => { fetchAll(); }, []);
+    useEffect(() => { fetchAll(); }, [fetchAll]);
 
     // ── Modelos disponíveis para o provider selecionado ────────────────────
     const availableModels = providers
@@ -71,6 +87,121 @@ export default function SettingsPage() {
             setSaving(false);
         }
     };
+
+    // ── Ativar um provedor OAuth (Codex/Claude) como provider de IA ────────
+    const activateOAuthProvider = async (providerName, chosenModel) => {
+        if (!chosenModel) { toast.error('Selecione um modelo primeiro.'); return; }
+        try {
+            await api.put('/ai/settings', {
+                provider: providerName,
+                chat_model: chosenModel,
+                openai_api_key: null,
+            });
+            setProvider(providerName);
+            setModel(chosenModel);
+            toast.success(`${providerName === 'codex' ? 'Codex Pro' : 'Claude'} ativado para IA!`);
+        } catch {
+            toast.error('Erro ao ativar provedor.');
+        }
+    };
+
+    // ── OAuth: Codex ─────────────────────────────────────────────────────
+    const handleCodexConnect = async () => {
+        setCodexConnecting(true);
+        try {
+            const { data } = await api.post('/api/codex-oauth/start');
+            const popup = window.open(data.auth_url, 'codex-oauth', 'width=520,height=700');
+            const poll = setInterval(async () => {
+                try {
+                    const res = await api.get('/api/codex-oauth/status');
+                    if (res.data.authenticated) {
+                        clearInterval(poll);
+                        popup?.close();
+                        setCodexConnecting(false);
+                        toast.success('Codex Pro conectado!');
+                        fetchAll();
+                    }
+                } catch { /* continua polling */ }
+            }, 2000);
+            // para o polling após 3 minutos mesmo sem sucesso
+            setTimeout(() => { clearInterval(poll); setCodexConnecting(false); }, 180_000);
+        } catch {
+            toast.error('Erro ao iniciar autenticação Codex.');
+            setCodexConnecting(false);
+        }
+    };
+
+    const handleCodexDisconnect = async () => {
+        try {
+            await api.post('/api/codex-oauth/logout');
+            toast.success('Codex desconectado.');
+            fetchAll();
+        } catch {
+            toast.error('Erro ao desconectar Codex.');
+        }
+    };
+
+    const fetchCodexUsage = async () => {
+        setCodexUsageLoading(true);
+        try {
+            const { data } = await api.get('/api/codex-oauth/usage');
+            setCodexUsage(data);
+        } catch {
+            toast.error('Erro ao buscar uso do Codex.');
+        } finally {
+            setCodexUsageLoading(false);
+        }
+    };
+
+    // ── OAuth: Claude ─────────────────────────────────────────────────────
+    const handleClaudeConnect = async () => {
+        setClaudeConnecting(true);
+        try {
+            const { data } = await api.post('/api/claude-oauth/start');
+            const popup = window.open(data.auth_url, 'claude-oauth', 'width=520,height=700');
+            const poll = setInterval(async () => {
+                try {
+                    const res = await api.get('/api/claude-oauth/status');
+                    if (res.data.authenticated) {
+                        clearInterval(poll);
+                        popup?.close();
+                        setClaudeConnecting(false);
+                        toast.success('Claude conectado!');
+                        fetchAll();
+                    }
+                } catch { /* continua polling */ }
+            }, 2000);
+            setTimeout(() => { clearInterval(poll); setClaudeConnecting(false); }, 180_000);
+        } catch {
+            toast.error('Erro ao iniciar autenticação Claude.');
+            setClaudeConnecting(false);
+        }
+    };
+
+    const handleClaudeDisconnect = async () => {
+        try {
+            await api.post('/api/claude-oauth/logout');
+            toast.success('Claude desconectado.');
+            fetchAll();
+        } catch {
+            toast.error('Erro ao desconectar Claude.');
+        }
+    };
+
+    const fetchClaudeUsage = async () => {
+        setClaudeUsageLoading(true);
+        try {
+            const { data } = await api.get('/api/claude-oauth/usage');
+            setClaudeUsage(data);
+        } catch {
+            toast.error('Erro ao buscar uso do Claude.');
+        } finally {
+            setClaudeUsageLoading(false);
+        }
+    };
+
+    const codexInfo   = providers?.codex  || {};
+    const claudeInfo  = providers?.claude || {};
 
     return (
         <div className="min-h-screen bg-gray-50 font-sans">
@@ -232,6 +363,200 @@ export default function SettingsPage() {
                         {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
                         {saving ? 'Salvando...' : 'Salvar Configurações'}
                     </button>
+                </div>
+
+                {/* ── Seção Provedores Premium (OAuth) ──────────────────── */}
+                <div className="mt-6 space-y-4">
+                    <h2 className="text-base font-semibold text-gray-700 flex items-center gap-2">
+                        <Zap size={17} className="text-yellow-500" /> Provedores Premium
+                    </h2>
+
+                    {/* ── Card Codex Pro ─────────────────────────────────── */}
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 space-y-4">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <span className="text-lg">⚡</span>
+                                <h3 className="font-semibold text-gray-900">Codex Pro</h3>
+                                {codexInfo.authenticated ? (
+                                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">conectado</span>
+                                ) : (
+                                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium">desconectado</span>
+                                )}
+                            </div>
+                            {codexInfo.authenticated ? (
+                                <button
+                                    onClick={handleCodexDisconnect}
+                                    className="inline-flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 border border-red-200 rounded-lg px-3 py-1.5 transition hover:bg-red-50"
+                                >
+                                    <Link2Off size={13} /> Desconectar
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={handleCodexConnect}
+                                    disabled={codexConnecting}
+                                    className="inline-flex items-center gap-1.5 text-xs bg-blue-600 text-white rounded-lg px-3 py-1.5 hover:bg-blue-700 transition disabled:opacity-60"
+                                >
+                                    {codexConnecting ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />}
+                                    {codexConnecting ? 'Aguardando...' : 'Conectar'}
+                                </button>
+                            )}
+                        </div>
+
+                        {codexInfo.accountId && (
+                            <p className="text-xs text-gray-400">Account: <span className="font-mono text-gray-600">{codexInfo.accountId}</span></p>
+                        )}
+
+                        {codexInfo.authenticated && (
+                            <>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1.5">Modelo</label>
+                                    <div className="space-y-1 border border-gray-200 rounded-xl p-1.5 max-h-40 overflow-y-auto">
+                                        {(codexInfo.models || []).map(m => (
+                                            <button
+                                                key={m}
+                                                onClick={() => setCodexModel(m)}
+                                                className={`w-full text-left px-3 py-1.5 rounded-lg text-sm transition flex items-center justify-between ${
+                                                    codexModel === m ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'
+                                                }`}
+                                            >
+                                                <span className="font-mono">{m}</span>
+                                                {codexModel === m && <Check size={13} className="text-blue-600" />}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <button
+                                    onClick={() => activateOAuthProvider('codex', codexModel)}
+                                    disabled={provider === 'codex'}
+                                    className={`w-full py-2.5 rounded-xl font-semibold text-sm transition flex items-center justify-center gap-2 ${
+                                        provider === 'codex'
+                                            ? 'bg-green-100 text-green-700 cursor-default'
+                                            : 'bg-blue-600 text-white hover:bg-blue-700'
+                                    }`}
+                                >
+                                    {provider === 'codex'
+                                        ? <><Check size={15} /> Ativo para IA</>
+                                        : <><Zap size={15} /> Usar para IA</>}
+                                </button>
+
+                                <div>
+                                    <button
+                                        onClick={fetchCodexUsage}
+                                        disabled={codexUsageLoading}
+                                        className="inline-flex items-center gap-1.5 text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-600 hover:bg-gray-50 transition disabled:opacity-50"
+                                    >
+                                        {codexUsageLoading ? <Loader2 size={13} className="animate-spin" /> : <BarChart2 size={13} />}
+                                        Ver consumo
+                                    </button>
+                                    {codexUsage && (
+                                        <pre className="mt-2 text-xs bg-gray-50 border border-gray-200 rounded-xl p-3 overflow-x-auto text-gray-600">
+                                            {JSON.stringify(codexUsage, null, 2)}
+                                        </pre>
+                                    )}
+                                </div>
+                            </>
+                        )}
+                    </div>
+
+                    {/* ── Card Claude ────────────────────────────────────── */}
+                    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 space-y-4">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <span className="text-lg">🧠</span>
+                                <h3 className="font-semibold text-gray-900">Claude (Anthropic)</h3>
+                                {claudeInfo.authenticated ? (
+                                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">conectado</span>
+                                ) : (
+                                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium">desconectado</span>
+                                )}
+                            </div>
+                            {claudeInfo.authenticated ? (
+                                <button
+                                    onClick={handleClaudeDisconnect}
+                                    className="inline-flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 border border-red-200 rounded-lg px-3 py-1.5 transition hover:bg-red-50"
+                                >
+                                    <Link2Off size={13} /> Desconectar
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={handleClaudeConnect}
+                                    disabled={claudeConnecting}
+                                    className="inline-flex items-center gap-1.5 text-xs bg-purple-600 text-white rounded-lg px-3 py-1.5 hover:bg-purple-700 transition disabled:opacity-60"
+                                >
+                                    {claudeConnecting ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />}
+                                    {claudeConnecting ? 'Aguardando...' : 'Conectar'}
+                                </button>
+                            )}
+                        </div>
+
+                        {claudeInfo.accountEmail && (
+                            <p className="text-xs text-gray-400">
+                                Conta: <span className="text-gray-600">{claudeInfo.accountEmail}</span>
+                                {claudeInfo.subscriptionType && (
+                                    <span className="ml-2 px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">{claudeInfo.subscriptionType}</span>
+                                )}
+                            </p>
+                        )}
+
+                        {claudeInfo.authenticated && !claudeInfo.hasInferenceScope && (
+                            <p className="text-xs text-yellow-600 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
+                                ⚠️ Conta sem escopo de inferência. Reconecte para habilitar o uso de IA.
+                            </p>
+                        )}
+
+                        {claudeInfo.authenticated && (
+                            <>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1.5">Modelo</label>
+                                    <div className="space-y-1 border border-gray-200 rounded-xl p-1.5 max-h-40 overflow-y-auto">
+                                        {(claudeInfo.models || []).map(m => (
+                                            <button
+                                                key={m}
+                                                onClick={() => setClaudeModel(m)}
+                                                className={`w-full text-left px-3 py-1.5 rounded-lg text-sm transition flex items-center justify-between ${
+                                                    claudeModel === m ? 'bg-purple-50 text-purple-700 font-medium' : 'text-gray-700 hover:bg-gray-50'
+                                                }`}
+                                            >
+                                                <span className="font-mono">{m}</span>
+                                                {claudeModel === m && <Check size={13} className="text-purple-600" />}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <button
+                                    onClick={() => activateOAuthProvider('claude', claudeModel)}
+                                    disabled={provider === 'claude' || !claudeInfo.hasInferenceScope}
+                                    className={`w-full py-2.5 rounded-xl font-semibold text-sm transition flex items-center justify-center gap-2 ${
+                                        provider === 'claude'
+                                            ? 'bg-green-100 text-green-700 cursor-default'
+                                            : 'bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50'
+                                    }`}
+                                >
+                                    {provider === 'claude'
+                                        ? <><Check size={15} /> Ativo para IA</>
+                                        : <><Zap size={15} /> Usar para IA</>}
+                                </button>
+
+                                <div>
+                                    <button
+                                        onClick={fetchClaudeUsage}
+                                        disabled={claudeUsageLoading}
+                                        className="inline-flex items-center gap-1.5 text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-600 hover:bg-gray-50 transition disabled:opacity-50"
+                                    >
+                                        {claudeUsageLoading ? <Loader2 size={13} className="animate-spin" /> : <BarChart2 size={13} />}
+                                        Ver consumo
+                                    </button>
+                                    {claudeUsage && (
+                                        <pre className="mt-2 text-xs bg-gray-50 border border-gray-200 rounded-xl p-3 overflow-x-auto text-gray-600">
+                                            {JSON.stringify(claudeUsage, null, 2)}
+                                        </pre>
+                                    )}
+                                </div>
+                            </>
+                        )}
+                    </div>
                 </div>
             </main>
         </div>

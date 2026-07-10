@@ -175,6 +175,212 @@ class OpenAIProvider(AIProvider):
         return bool(self.api_key)
 
 
+def _extract_responses_text(data: Dict[str, Any]) -> str:
+    """Extrai o texto de uma resposta da Responses API (Codex backend)."""
+    if isinstance(data.get("output_text"), str):
+        return data["output_text"]
+    parts: list[str] = []
+    for item in data.get("output", []) or []:
+        if item.get("type") == "message":
+            for c in item.get("content", []) or []:
+                if c.get("type") in ("output_text", "text"):
+                    parts.append(c.get("text", ""))
+    return "".join(parts)
+
+
+class CodexOAuthProvider(AIProvider):
+    """Usa credenciais OAuth do Codex Pro (ChatGPT backend / Responses API)."""
+
+    BACKEND_URL = "https://chatgpt.com/backend-api/codex"
+
+    def __init__(self, token: str, account_id: Optional[str] = None):
+        self.token = token
+        self.account_id = account_id
+
+    def _headers(self) -> dict:
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+        }
+        if self.account_id:
+            headers["chatgpt-account-id"] = self.account_id
+        return headers
+
+    async def chat(
+        self,
+        messages: list[dict],
+        model: str,
+        system: str = "",
+        stream: bool = True,
+    ) -> AsyncGenerator[str, None]:
+        input_items = [
+            {"role": m.get("role", "user"), "content": m.get("content", "")}
+            for m in messages
+        ]
+        payload: dict = {"model": model, "input": input_items, "stream": stream}
+        if system:
+            payload["instructions"] = system
+
+        timeout = httpx.Timeout(120.0)
+        if stream:
+            async with AsyncClient(timeout=timeout) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self.BACKEND_URL}/responses",
+                    json=payload,
+                    headers=self._headers(),
+                ) as response:
+                    if response.status_code >= 400:
+                        body = (await response.aread()).decode(errors="replace")
+                        raise httpx.HTTPStatusError(
+                            f"Codex API {response.status_code}: {body[:300]}",
+                            request=response.request,
+                            response=response,
+                        )
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data_str = line[len("data:"):].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            evt = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                        if evt.get("type") == "response.output_text.delta":
+                            delta = evt.get("delta")
+                            if delta:
+                                yield delta
+            return
+
+        async with AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                f"{self.BACKEND_URL}/responses",
+                json=payload,
+                headers=self._headers(),
+            )
+            if response.status_code >= 400:
+                raise httpx.HTTPStatusError(
+                    f"Codex API {response.status_code}: {response.text[:300]}",
+                    request=response.request,
+                    response=response,
+                )
+            yield _extract_responses_text(response.json())
+
+    async def embed(self, texts: list[str], model: str) -> list[list[float]]:
+        raise NotImplementedError("Codex OAuth não suporta embeddings; use Ollama.")
+
+    async def list_models(self) -> list[str]:
+        return ["gpt-5.5", "gpt-5.3-codex-spark", "gpt-4o", "gpt-4.1"]
+
+    async def is_available(self) -> bool:
+        return bool(self.token)
+
+
+class ClaudeOAuthProvider(AIProvider):
+    """Usa credenciais OAuth do Claude (Anthropic Messages API via token OAuth)."""
+
+    API_URL = "https://api.anthropic.com/v1/messages"
+    # A Messages API exige que o primeiro bloco de system seja a identidade do
+    # Claude Code quando autenticado via token OAuth (sk-ant-oat…).
+    IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
+
+    def __init__(self, access_token: str, max_tokens: int = 4096):
+        self.access_token = access_token
+        self.max_tokens = max_tokens
+
+    def _headers(self) -> dict:
+        return {
+            "Authorization": f"Bearer {self.access_token}",
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "oauth-2025-04-20",
+            "Content-Type": "application/json",
+        }
+
+    def _system_blocks(self, system: str) -> list[dict]:
+        blocks = [{"type": "text", "text": self.IDENTITY}]
+        if system:
+            blocks.append({"type": "text", "text": system})
+        return blocks
+
+    async def chat(
+        self,
+        messages: list[dict],
+        model: str,
+        system: str = "",
+        stream: bool = True,
+    ) -> AsyncGenerator[str, None]:
+        msgs = [
+            {"role": m.get("role", "user"), "content": m.get("content", "")}
+            for m in messages
+        ]
+        payload = {
+            "model": model,
+            "max_tokens": self.max_tokens,
+            "system": self._system_blocks(system),
+            "messages": msgs,
+            "stream": stream,
+        }
+
+        timeout = httpx.Timeout(120.0)
+        if stream:
+            async with AsyncClient(timeout=timeout) as client:
+                async with client.stream(
+                    "POST", self.API_URL, json=payload, headers=self._headers()
+                ) as response:
+                    if response.status_code >= 400:
+                        body = (await response.aread()).decode(errors="replace")
+                        raise httpx.HTTPStatusError(
+                            f"Claude API {response.status_code}: {body[:300]}",
+                            request=response.request,
+                            response=response,
+                        )
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data_str = line[len("data:"):].strip()
+                        try:
+                            evt = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                        if evt.get("type") == "content_block_delta":
+                            text = (evt.get("delta") or {}).get("text")
+                            if text:
+                                yield text
+            return
+
+        async with AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                self.API_URL, json=payload, headers=self._headers()
+            )
+            if response.status_code >= 400:
+                raise httpx.HTTPStatusError(
+                    f"Claude API {response.status_code}: {response.text[:300]}",
+                    request=response.request,
+                    response=response,
+                )
+            data = response.json()
+            yield "".join(
+                c.get("text", "")
+                for c in data.get("content", []) or []
+                if c.get("type") == "text"
+            )
+
+    async def embed(self, texts: list[str], model: str) -> list[list[float]]:
+        raise NotImplementedError("Claude OAuth não suporta embeddings; use Ollama.")
+
+    async def list_models(self) -> list[str]:
+        return [
+            "claude-opus-4-8",
+            "claude-sonnet-5",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5-20251001",
+        ]
+
+    async def is_available(self) -> bool:
+        return bool(self.access_token)
+
+
 ollama_provider = OllamaProvider()
 
 

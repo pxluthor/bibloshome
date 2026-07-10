@@ -11,7 +11,17 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from ai.providers import get_provider, ollama_provider
+from ai.providers import (
+    get_provider,
+    ollama_provider,
+    AIProvider,
+    CodexOAuthProvider,
+    ClaudeOAuthProvider,
+)
+from oauth.codex_service import get_codex_status
+from oauth.claude_service import get_claude_status, refresh_claude_if_needed
+from oauth.codex_credentials import get_codex_credentials
+from oauth.claude_credentials import get_claude_credentials
 from ai.rag import index_book, is_book_indexed, query_book, count_indexed_pages
 from auth import get_current_user
 from database import engine, get_session
@@ -77,6 +87,45 @@ async def _get_user_settings(user_id: int, session: Session) -> UsuarioAISetting
         session.commit()
         session.refresh(settings)
     return settings
+
+
+def build_provider(
+    settings: UsuarioAISettings, user_id: int, session: Session
+) -> AIProvider:
+    """Constrói o provider de chat a partir das settings do usuário.
+
+    Centraliza a lógica dos 4 providers (ollama/openai/codex/claude) para que os
+    sites de inferência não divirjam. Credenciais OAuth são buscadas (e
+    refreshadas, no caso do Claude) aqui, onde há sessão + usuário.
+    """
+    provider_name = settings.provider
+
+    if provider_name == "codex":
+        creds = get_codex_credentials(user_id, session)
+        token = creds.get("apiKey") or creds.get("accessToken") if creds else None
+        if not token:
+            raise HTTPException(
+                status_code=400,
+                detail="Codex não conectado. Conecte sua conta em Configurações.",
+            )
+        return CodexOAuthProvider(token=token, account_id=creds.get("accountId"))
+
+    if provider_name == "claude":
+        creds = refresh_claude_if_needed(user_id, session) or get_claude_credentials(
+            user_id, session
+        )
+        access_token = creds.get("accessToken") if creds else None
+        if not access_token:
+            raise HTTPException(
+                status_code=400,
+                detail="Claude não conectado. Conecte sua conta em Configurações.",
+            )
+        return ClaudeOAuthProvider(access_token=access_token)
+
+    try:
+        return get_provider(provider_name, settings.openai_api_key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 async def _upsert_ia_status(
@@ -185,7 +234,10 @@ class TTSRequest(BaseModel):
 
 
 @router.get("/providers")
-async def list_providers(current_user: Usuario = Depends(get_current_user)):
+async def list_providers(
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
     available_ollama = await ollama_provider.is_available()
     ollama_models: list[str] = []
     if available_ollama:
@@ -194,11 +246,34 @@ async def list_providers(current_user: Usuario = Depends(get_current_user)):
         except Exception:
             pass
 
+    codex_status = get_codex_status(current_user.id, session)
+    claude_status = get_claude_status(current_user.id, session)
+
     return {
         "ollama": {"available": available_ollama, "models": ollama_models},
         "openai": {
             "available": True,
             "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
+        },
+        "codex": {
+            "available": codex_status["authenticated"],
+            "authenticated": codex_status["authenticated"],
+            "hasApiKey": codex_status["hasApiKey"],
+            "accountId": codex_status["accountId"],
+            "models": ["gpt-5.5", "gpt-5.3-codex-spark", "gpt-4o", "gpt-4.1"],
+        },
+        "claude": {
+            "available": claude_status["authenticated"],
+            "authenticated": claude_status["authenticated"],
+            "subscriptionType": claude_status["subscriptionType"],
+            "accountEmail": claude_status["accountEmail"],
+            "hasInferenceScope": claude_status["hasInferenceScope"],
+            "models": [
+                "claude-opus-4-8",
+                "claude-sonnet-5",
+                "claude-sonnet-4-6",
+                "claude-haiku-4-5-20251001",
+            ],
         },
     }
 
@@ -267,10 +342,7 @@ async def extract_metadata(
     texto = texto[:4000]
 
     settings = await _get_user_settings(current_user.id, session)
-    try:
-        provider = get_provider(settings.provider, settings.openai_api_key)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    provider = build_provider(settings, current_user.id, session)
 
     resposta = ""
     async for token in provider.chat(
@@ -328,10 +400,7 @@ async def summarize_book(
     texto = texto[:8000]
 
     settings = await _get_user_settings(current_user.id, session)
-    try:
-        provider = get_provider(settings.provider, settings.openai_api_key)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    provider = build_provider(settings, current_user.id, session)
 
     titulo = livro.titulo or "Desconhecido"
 
@@ -478,10 +547,7 @@ async def chat_with_book(
         raise HTTPException(status_code=404, detail="Livro não encontrado")
 
     settings = await _get_user_settings(current_user.id, session)
-    try:
-        provider = get_provider(settings.provider, settings.openai_api_key)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    provider = build_provider(settings, current_user.id, session)
 
     if body.page_ranges:
         # ── Estúdio mode: lê páginas direto do PDF (sem ChromaDB) ────────────

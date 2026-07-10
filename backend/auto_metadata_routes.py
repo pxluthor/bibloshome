@@ -6,8 +6,7 @@ from bs4 import BeautifulSoup
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from ai.providers import get_provider
-from ai_routes import _get_user_settings
+from ai_routes import _get_user_settings, build_provider
 from auth import get_current_user
 from database import get_session
 from models import Livro, Usuario, UsuarioAISettings
@@ -256,7 +255,7 @@ async def auto_fill_metadata(
         "web_snippets": web_snippets or None,
     }
 
-    # 4. Tenta LLM sempre (Ollama ou OpenAI) — fallback para mapeamento direto só se falhar
+    # 4. Tenta LLM sempre (Ollama/OpenAI/Codex/Claude) — fallback para mapeamento direto só se falhar
     if settings.provider == "openai" and not settings.openai_api_key:
         llm_available = False
     else:
@@ -266,7 +265,12 @@ async def auto_fill_metadata(
         model = settings.chat_model or (
             OPENAI_DEFAULT_CHAT if settings.provider == "openai" else OLLAMA_DEFAULT_CHAT
         )
-        provider = get_provider(settings.provider, settings.openai_api_key)
+        try:
+            provider = build_provider(settings, current_user.id, session)
+        except HTTPException:
+            llm_available = False
+
+    if llm_available:
         full_response = ""
         try:
             async for chunk in provider.chat(

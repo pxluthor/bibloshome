@@ -11,8 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
-from ai.providers import get_provider
-from ai_routes import SSE_HEADERS, _get_user_settings
+from ai_routes import SSE_HEADERS, _get_user_settings, build_provider
 from auth import get_current_user
 from database import get_session, engine
 from models import EstudioArtefato, Livro, Usuario
@@ -196,10 +195,7 @@ async def generate_artifact(
         raise HTTPException(status_code=404, detail="Livro n\u00e3o encontrado")
 
     settings = await _get_user_settings(current_user.id, session)
-    try:
-        provider = get_provider(settings.provider, settings.openai_api_key)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    provider = build_provider(settings, current_user.id, session)
 
     page_ranges = body.page_ranges or [{"start": 1, "end": livro.paginas or 9999}]
     texto = _extract_pages_text(livro, page_ranges, pdf_service)

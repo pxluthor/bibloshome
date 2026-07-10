@@ -34,3 +34,6 @@ Thumbs.db
 .env.docker.local
 melhorias/
 .claude
+
+# Backups de banco (dumps grandes, nao versionar)
+backups/
