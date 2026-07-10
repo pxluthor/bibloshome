@@ -4,6 +4,7 @@ import { ArrowLeft, Settings, Bot, Key, Check, Loader2, RefreshCw, ChevronDown, 
 import api from '../services/api';
 import { toast } from '../utils/toast';
 import AppHeader from './AppHeader';
+import UsageChart from './UsageChart';
 
 export default function SettingsPage() {
     const navigate = useNavigate();
@@ -449,11 +450,7 @@ export default function SettingsPage() {
                                         {codexUsageLoading ? <Loader2 size={13} className="animate-spin" /> : <BarChart2 size={13} />}
                                         Ver consumo
                                     </button>
-                                    {codexUsage && (
-                                        <pre className="mt-2 text-xs bg-gray-50 border border-gray-200 rounded-xl p-3 overflow-x-auto text-gray-600">
-                                            {JSON.stringify(codexUsage, null, 2)}
-                                        </pre>
-                                    )}
+                                    {codexUsage && <UsageChart data={codexUsage} />}
                                 </div>
                             </>
                         )}
@@ -548,11 +545,7 @@ export default function SettingsPage() {
                                         {claudeUsageLoading ? <Loader2 size={13} className="animate-spin" /> : <BarChart2 size={13} />}
                                         Ver consumo
                                     </button>
-                                    {claudeUsage && (
-                                        <pre className="mt-2 text-xs bg-gray-50 border border-gray-200 rounded-xl p-3 overflow-x-auto text-gray-600">
-                                            {JSON.stringify(claudeUsage, null, 2)}
-                                        </pre>
-                                    )}
+                                    {claudeUsage && <UsageChart data={claudeUsage} />}
                                 </div>
                             </>
                         )}
