@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import api from '../services/api';
 import { toast } from '../utils/toast';
+import ChatMarkdown from './ChatMarkdown';
 
 // ─── ARTIFACT TYPES ───────────────────────────────────────────────────────────
 const ARTIFACT_TYPES = [
@@ -887,20 +888,30 @@ const Estudio = () => {
                                             </div>
                                         )}
                                         {messages.map((msg, i) => (
-                                            <div
-                                                key={i}
-                                                className={`text-sm rounded-xl px-3 py-2 max-w-[90%] ${
-                                                    msg.role === 'user'
-                                                        ? 'bg-purple-600 text-white ml-auto'
-                                                        : 'bg-gray-100 text-gray-800'
-                                                }`}
-                                            >
-                                                {msg.loading ? (
-                                                    <Loader2 size={14} className="animate-spin" />
-                                                ) : (
-                                                    <span className="whitespace-pre-wrap">{msg.content}</span>
-                                                )}
-                                            </div>
+                                            msg.role === 'user' ? (
+                                                <div key={i} className="flex justify-end">
+                                                    <div className="text-sm rounded-2xl rounded-br-sm px-4 py-2.5 max-w-[85%] bg-purple-600 text-white whitespace-pre-wrap leading-relaxed shadow-sm">
+                                                        {msg.content}
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div key={i} className="flex gap-2.5 items-start">
+                                                    <div className="flex-shrink-0 w-7 h-7 rounded-full bg-purple-100 flex items-center justify-center mt-0.5">
+                                                        <Bot size={15} className="text-purple-600" />
+                                                    </div>
+                                                    <div className="flex-1 min-w-0 text-sm text-gray-800 bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-2.5 shadow-sm">
+                                                        {msg.loading && !msg.content ? (
+                                                            <span className="inline-flex gap-1 items-center py-1">
+                                                                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                                                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                                                <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                                            </span>
+                                                        ) : (
+                                                            <ChatMarkdown content={msg.content} />
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )
                                         ))}
                                         <div ref={bottomRef} />
                                     </div>
