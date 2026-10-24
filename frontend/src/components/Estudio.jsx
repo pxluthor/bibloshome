@@ -5,7 +5,7 @@ import {
     CheckCircle, GraduationCap, FileQuestion, Layers, Map,
     Headphones, Plus, Trash2, Play, Pause, Square, Volume2,
     RefreshCw, Menu, X, ChevronLeft, ChevronRight, RotateCcw,
-    ChevronDown, Save
+    ChevronDown, Save, FileText, Lightbulb, HelpCircle, List
 } from 'lucide-react';
 import api from '../services/api';
 import { toast } from '../utils/toast';
@@ -41,19 +41,43 @@ const ARTIFACT_TYPES = [
         icon: Headphones,
         color: 'blue',
     },
+    { id: 'podcast',  label: 'Podcast a Dois',        desc: 'Ana e Beto conversam sobre o conteúdo',  icon: Headphones, color: 'indigo' },
+    { id: 'video',    label: 'Vídeo Explicativo',     desc: 'Slides narrados gerados do conteúdo',    icon: Play,       color: 'cyan' },
+    { id: 'resumo', label: 'Resumo Didático',       desc: 'Visão geral + conceitos-chave',          icon: FileText,   color: 'teal' },
+    { id: 'insights', label: 'Ideias-chave',          desc: 'As ideias mais importantes em tópicos',  icon: Lightbulb,  color: 'amber' },
+    { id: 'reflexao', label: 'Perguntas de Reflexão', desc: 'Perguntas para pensar e aplicar',        icon: HelpCircle, color: 'rose' },
+    { id: 'sumario',  label: 'Sumário Comentado',     desc: 'Tópicos na ordem em que aparecem',       icon: List,       color: 'slate' },
+    { id: 'videos',   label: 'Vídeos de Reforço',     desc: 'Videoaulas do YouTube sobre o conteúdo', icon: Play,       color: 'red' },
 ];
+
+// Text artifacts rendered as Markdown
+const MARKDOWN_TIPOS = new Set(['resumo', 'insights', 'reflexao', 'sumario']);
 
 const COLOR_MAP = {
     purple: 'bg-purple-100 text-purple-700 border-purple-200',
     green:  'bg-green-100 text-green-700 border-green-200',
     orange: 'bg-orange-100 text-orange-700 border-orange-200',
     blue:   'bg-blue-100 text-blue-700 border-blue-200',
+    teal:   'bg-teal-100 text-teal-700 border-teal-200',
+    amber:  'bg-amber-100 text-amber-800 border-amber-200',
+    rose:   'bg-rose-100 text-rose-700 border-rose-200',
+    slate:  'bg-slate-100 text-slate-700 border-slate-200',
+    red:    'bg-red-100 text-red-700 border-red-200',
+    indigo: 'bg-indigo-100 text-indigo-700 border-indigo-200',
+    cyan:   'bg-cyan-100 text-cyan-800 border-cyan-200',
 };
 const BTN_COLOR_MAP = {
     purple: 'bg-purple-600 hover:bg-purple-700',
     green:  'bg-green-600 hover:bg-green-700',
     orange: 'bg-orange-500 hover:bg-orange-600',
     blue:   'bg-blue-600 hover:bg-blue-700',
+    teal:   'bg-teal-600 hover:bg-teal-700',
+    amber:  'bg-amber-600 hover:bg-amber-700',
+    rose:   'bg-rose-600 hover:bg-rose-700',
+    slate:  'bg-slate-600 hover:bg-slate-700',
+    red:    'bg-red-600 hover:bg-red-700',
+    indigo: 'bg-indigo-600 hover:bg-indigo-700',
+    cyan:   'bg-cyan-700 hover:bg-cyan-800',
 };
 
 // ─── QUIZ RESULT ──────────────────────────────────────────────────────────────
@@ -269,6 +293,249 @@ const FlashcardsResult = ({ cards }) => {
 };
 
 // ─── AUDIO RESUMO RESULT ──────────────────────────────────────────────────────
+// ─── VIDEOS RESULT ────────────────────────────────────────────────────────────
+const VideosResult = ({ videos }) => {
+    const [playing, setPlaying] = useState(null);
+    if (!videos.length) return <p className="text-sm text-gray-500">Nenhum vídeo encontrado.</p>;
+    return (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {videos.map((v) => (
+                <div key={v.video_id} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                    {playing === v.video_id ? (
+                        <iframe
+                            className="w-full aspect-video"
+                            src={`https://www.youtube-nocookie.com/embed/${v.video_id}?autoplay=1`}
+                            title={v.title}
+                            allow="autoplay; encrypted-media; picture-in-picture"
+                            allowFullScreen
+                        />
+                    ) : (
+                        <button onClick={() => setPlaying(v.video_id)} className="relative w-full block" title="Assistir aqui">
+                            <img src={v.thumbnail} alt="" className="w-full aspect-video object-cover" loading="lazy" />
+                            <Play size={36} className="absolute inset-0 m-auto text-white drop-shadow-lg" />
+                        </button>
+                    )}
+                    <div className="p-2.5">
+                        <a
+                            href={`https://www.youtube.com/watch?v=${v.video_id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm font-semibold text-gray-800 hover:text-red-600 line-clamp-2"
+                        >
+                            {v.title}
+                        </a>
+                        <p className="text-xs text-gray-500 mt-0.5">{v.channel} · busca: “{v.query}”</p>
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+};
+
+// ─── VIDEO RESULT ─────────────────────────────────────────────────────────────
+const VideoResult = ({ scenes }) => {
+    const [videoUrl, setVideoUrl] = useState(null);
+    const [rendering, setRendering] = useState(false);
+
+    useEffect(() => () => videoUrl && URL.revokeObjectURL(videoUrl), [videoUrl]);
+
+    const render = async () => {
+        setRendering(true);
+        try {
+            // LLM output may carry nulls or oversized fields; match the backend's VideoScene limits.
+            const str = (v, max) => (typeof v === 'string' ? v : '').slice(0, max);
+            const payload = scenes.slice(0, 15).map((s) => ({
+                layout: str(s.layout, 20) || 'topicos',
+                title: str(s.title, 200),
+                subtitle: str(s.subtitle, 300),
+                bullets: (Array.isArray(s.bullets) ? s.bullets : []).filter((b) => typeof b === 'string').slice(0, 8),
+                text: str(s.text, 600),
+                code: str(s.code, 2000),
+                narration: str(s.narration, 2000),
+            }));
+            const { data } = await api.post('/ai/estudio/video/mp4', { scenes: payload }, { responseType: 'blob', timeout: 600000 });
+            setVideoUrl(URL.createObjectURL(data));
+        } catch (e) {
+            let detail = null;
+            try { detail = JSON.parse(await e.response.data.text()).detail; } catch {}
+            toast.error(detail || e.message);
+        } finally {
+            setRendering(false);
+        }
+    };
+
+    if (!scenes.length) return <p className="text-sm text-gray-500">Roteiro vazio. Tente regerar.</p>;
+
+    return (
+        <div className="space-y-3">
+            {videoUrl ? (
+                <div className="space-y-2">
+                    <video src={videoUrl} controls className="w-full rounded-xl bg-black aspect-video" />
+                    <a href={videoUrl} download="video-explicativo.mp4" className="inline-flex items-center gap-2 px-4 py-2 border border-cyan-300 text-cyan-800 rounded-xl text-sm font-semibold hover:bg-cyan-50 transition">
+                        <Save size={16} /> Baixar MP4
+                    </a>
+                </div>
+            ) : (
+                <button onClick={render} disabled={rendering} className="flex items-center gap-2 px-4 py-2 bg-cyan-700 text-white rounded-xl text-sm font-semibold hover:bg-cyan-800 disabled:opacity-60 transition">
+                    {rendering ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+                    {rendering ? 'Renderizando vídeo… (pode levar 1-2 min)' : 'Renderizar vídeo'}
+                </button>
+            )}
+            <ol className="space-y-2">
+                {scenes.map((s, i) => (
+                    <li key={i} className="bg-white rounded-xl border border-gray-200 p-3 text-sm">
+                        <p className="font-semibold text-gray-800">
+                            {i + 1}. {s.title} <span className="text-xs font-normal text-gray-400">({s.layout})</span>
+                        </p>
+                        <p className="text-gray-600 mt-1 leading-relaxed">{s.narration}</p>
+                    </li>
+                ))}
+            </ol>
+        </div>
+    );
+};
+
+// ─── PODCAST RESULT ───────────────────────────────────────────────────────────
+const PODCAST_VOICES = { Ana: 'Francisca', Beto: 'Antonio' };
+
+const PodcastResult = ({ lines }) => {
+    const [current, setCurrent] = useState(-1);   // index of line playing, -1 = idle
+    const [loading, setLoading] = useState(false);
+    const [paused, setPaused] = useState(false);
+    const audioRef = useRef(null);
+    const cacheRef = useRef(new Map());           // index -> Promise<objectURL>
+    const runRef = useRef(0);                     // bumps on stop to cancel pending playback
+
+    const fetchLine = (i) => {
+        if (!cacheRef.current.has(i)) {
+            const line = lines[i];
+            const p = fetch(`${api.defaults.baseURL}/ai/tts`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('token')}`,
+                },
+                body: JSON.stringify({ text: line.text, voice: PODCAST_VOICES[line.speaker] || 'Francisca', rate: 1.05 }),
+            }).then((res) => {
+                if (!res.ok) throw new Error('Erro ao gerar áudio');
+                return res.blob();
+            }).then((blob) => URL.createObjectURL(blob));
+            cacheRef.current.set(i, p);
+        }
+        return cacheRef.current.get(i);
+    };
+
+    const stop = () => {
+        runRef.current += 1;
+        audioRef.current?.pause();
+        audioRef.current = null;
+        cacheRef.current.forEach((p) => p.then(URL.revokeObjectURL, () => {}));
+        cacheRef.current.clear();
+        setCurrent(-1);
+        setLoading(false);
+        setPaused(false);
+    };
+
+    const playFrom = async (i, run) => {
+        if (i >= lines.length) { stop(); return; }
+        setCurrent(i);
+        setLoading(true);
+        try {
+            const url = await fetchLine(i);
+            if (run !== runRef.current) return;
+            if (i + 1 < lines.length) fetchLine(i + 1).catch(() => {}); // prefetch next line
+            const audio = new Audio(url);
+            audioRef.current = audio;
+            audio.onended = () => playFrom(i + 1, run);
+            await audio.play();
+            setLoading(false);
+            setPaused(false);
+        } catch (e) {
+            if (run === runRef.current) { stop(); toast.error(e.message); }
+        }
+    };
+
+    const start = (i = 0) => {
+        stop();
+        playFrom(i, runRef.current);
+    };
+
+    const togglePause = () => {
+        const audio = audioRef.current;
+        if (!audio) return;
+        if (audio.paused) { audio.play(); setPaused(false); } else { audio.pause(); setPaused(true); }
+    };
+
+    useEffect(() => () => stop(), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const [downloading, setDownloading] = useState(false);
+    const downloadMp3 = async () => {
+        setDownloading(true);
+        try {
+            const { data } = await api.post('/ai/estudio/podcast/mp3', { lines }, { responseType: 'blob', timeout: 300000 });
+            const url = URL.createObjectURL(data);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'podcast.mp3';
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            let detail = null;
+            try { detail = JSON.parse(await e.response.data.text()).detail; } catch {}
+            toast.error(detail || e.message);
+        } finally {
+            setDownloading(false);
+        }
+    };
+
+    if (!lines.length) return <p className="text-sm text-gray-500">Roteiro vazio. Tente regerar.</p>;
+
+    return (
+        <div className="space-y-3">
+            <div className="flex gap-2">
+                {current === -1 ? (
+                    <button onClick={() => start(0)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition">
+                        <Volume2 size={16} /> Ouvir Podcast
+                    </button>
+                ) : null}
+                {current === -1 ? (
+                    <button onClick={downloadMp3} disabled={downloading} className="flex items-center gap-2 px-4 py-2 border border-indigo-300 text-indigo-700 rounded-xl text-sm font-semibold hover:bg-indigo-50 disabled:opacity-60 transition">
+                        {downloading ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                        {downloading ? 'Compondo MP3…' : 'Baixar MP3'}
+                    </button>
+                ) : (
+                    <>
+                        <button onClick={togglePause} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-yellow-500 text-white rounded-xl text-sm font-semibold hover:bg-yellow-600 disabled:opacity-60 transition">
+                            {loading ? <Loader2 size={16} className="animate-spin" /> : paused ? <Play size={16} /> : <Pause size={16} />}
+                            {loading ? 'Carregando…' : paused ? 'Continuar' : 'Pausar'}
+                        </button>
+                        <button onClick={stop} className="px-3 py-2 bg-red-500 text-white rounded-xl hover:bg-red-600 transition" title="Parar">
+                            <Square size={16} />
+                        </button>
+                    </>
+                )}
+            </div>
+            <div className="space-y-2">
+                {lines.map((line, i) => (
+                    <button
+                        key={i}
+                        onClick={() => start(i)}
+                        title="Ouvir a partir daqui"
+                        className={`w-full text-left flex gap-2 rounded-xl p-3 text-sm transition border ${
+                            i === current ? 'bg-indigo-50 border-indigo-300' : 'bg-white border-gray-200 hover:border-indigo-200'
+                        } ${line.speaker === 'Beto' ? 'pl-8' : ''}`}
+                    >
+                        <span className={`font-bold flex-shrink-0 ${line.speaker === 'Beto' ? 'text-emerald-700' : 'text-indigo-700'}`}>
+                            {line.speaker}:
+                        </span>
+                        <span className="text-gray-800 leading-relaxed">{line.text}</span>
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+};
+
 const AudioResumoResult = ({ text }) => {
     const [playing, setPlaying] = useState(false);
     const [paused, setPaused] = useState(false);
@@ -642,7 +909,7 @@ const Estudio = () => {
                     setArtifacts((prev) => ({ ...prev, [tipo]: { loading: false, result: data.content, error: null } }));
                 }
             } catch (e) {
-                setArtifacts((prev) => ({ ...prev, [tipo]: { loading: false, result: null, error: e.message } }));
+                setArtifacts((prev) => ({ ...prev, [tipo]: { loading: false, result: null, error: e.response?.data?.detail || e.message } }));
             }
         }
     };
@@ -1054,6 +1321,30 @@ const Estudio = () => {
                                                     ) : art.id === 'audio_resumo' ? (
                                                         <div className="mt-3">
                                                             <AudioResumoResult text={state.result} />
+                                                        </div>
+                                                    ) : art.id === 'podcast' ? (
+                                                        <div className="mt-3">
+                                                            <PodcastResult
+                                                                lines={Array.isArray(state.result)
+                                                                    ? state.result.filter((l) => l && typeof l.text === 'string' && l.text.trim())
+                                                                    : []}
+                                                            />
+                                                        </div>
+                                                    ) : art.id === 'video' ? (
+                                                        <div className="mt-3">
+                                                            <VideoResult
+                                                                scenes={Array.isArray(state.result)
+                                                                    ? state.result.filter((s) => s && typeof s.narration === 'string' && s.narration.trim())
+                                                                    : []}
+                                                            />
+                                                        </div>
+                                                    ) : art.id === 'videos' ? (
+                                                        <div className="mt-3">
+                                                            <VideosResult videos={Array.isArray(state.result) ? state.result : []} />
+                                                        </div>
+                                                    ) : MARKDOWN_TIPOS.has(art.id) ? (
+                                                        <div className="mt-3 bg-white rounded-xl border border-gray-200 p-4 text-sm text-gray-800">
+                                                            <ChatMarkdown content={state.result} />
                                                         </div>
                                                     ) : null}
                                                 </div>

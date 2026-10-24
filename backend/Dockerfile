@@ -10,6 +10,8 @@ RUN apt-get update \
         build-essential \
         default-libmysqlclient-dev \
         pkg-config \
+        ffmpeg \
+        fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

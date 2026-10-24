@@ -163,7 +163,7 @@ class EstudioArtefato(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     usuario_id: int = Field(foreign_key="usuario.id", index=True)
     livro_id: int = Field(foreign_key="livros.id", index=True)
-    tipo: str  # quiz | flashcards | mindmap | audio_resumo
+    tipo: str  # quiz | flashcards | mindmap | audio_resumo | resumo | insights | reflexao | sumario | videos | podcast | video
     conteudo: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
     saved_at: datetime = Field(default_factory=datetime.utcnow)
 

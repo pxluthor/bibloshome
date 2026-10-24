@@ -67,7 +67,9 @@ Escreva em português, seja conciso mas informativo. Máximo 400 palavras."""
 SYSTEM_CHAT = """Você é um assistente de leitura que ajuda o usuário a entender o livro que está lendo.
 Responda perguntas com base nos trechos relevantes do livro fornecidos no contexto.
 Se a resposta não estiver no contexto, diga que não encontrou essa informação no livro.
-Seja direto, claro e cite a página quando possível. Responda em português."""
+Seja direto e claro. Responda em português.
+CITAÇÕES: cada trecho do contexto vem marcado com [Página N]. Ao final de cada afirmação tirada do livro,
+cite a página no formato (p. N). Nunca invente páginas que não aparecem no contexto."""
 
 
 # ---- HELPERS ----
