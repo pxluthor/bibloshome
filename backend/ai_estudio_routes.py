@@ -25,7 +25,7 @@ from sqlmodel import Session, select
 from ai_routes import SSE_HEADERS, VOICE_MAP, _corrigir_pronuncia, _get_user_settings, build_provider
 from auth import get_current_user
 from database import get_session, engine
-from models import EstudioArtefato, Livro, Usuario
+from models import utcnow, EstudioArtefato, Livro, Usuario
 from services import PDFService, get_pdf_service
 
 logger = logging.getLogger(__name__)
@@ -406,7 +406,7 @@ async def save_artifact(
 
     if row:
         row.conteudo = body.conteudo
-        row.saved_at = datetime.utcnow()
+        row.saved_at = utcnow()
     else:
         row = EstudioArtefato(
             usuario_id=current_user.id,

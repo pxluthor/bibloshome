@@ -1,3 +1,4 @@
+from sqlalchemy import inspect, text
 from sqlmodel import SQLModel, create_engine, Session
 import os
 from dotenv import load_dotenv
@@ -29,6 +30,32 @@ engine = create_engine(
 
 def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
+    _ensure_ai_provider_account_columns()
+
+
+def _ensure_ai_provider_account_columns():
+    """Adiciona campos novos sem depender de um runner externo de migrations."""
+    table_name = "usuario_ai_provider_accounts"
+    inspector = inspect(engine)
+    if table_name not in inspector.get_table_names():
+        return
+
+    existing = {column["name"] for column in inspector.get_columns(table_name)}
+    required = {
+        "temperature": "FLOAT NULL",
+        "top_p": "FLOAT NULL",
+        "max_tokens": "INTEGER NULL",
+        "reasoning_effort": "VARCHAR(20) NULL",
+    }
+    missing = {name: ddl for name, ddl in required.items() if name not in existing}
+    if not missing:
+        return
+
+    with engine.begin() as connection:
+        for name, ddl in missing.items():
+            connection.execute(
+                text(f"ALTER TABLE {table_name} ADD COLUMN {name} {ddl}")
+            )
 
 def get_session():
     with Session(engine) as session:

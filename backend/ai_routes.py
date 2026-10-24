@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+from urllib.parse import urlsplit, urlunsplit
 
 import edge_tts
 import fitz  # PyMuPDF
@@ -33,6 +34,7 @@ from models import (
     Usuario,
     UsuarioAISettings,
     UsuarioAISettingsUpdate,
+    UsuarioAIProviderAccount,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,7 @@ logger = logging.getLogger(__name__)
 OLLAMA_DEFAULT_CHAT = os.getenv("OLLAMA_DEFAULT_CHAT_MODEL", "llama3.1:8b")
 OPENAI_DEFAULT_CHAT = os.getenv("OPENAI_DEFAULT_CHAT_MODEL", "gpt-4o-mini")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+PROVIDER_ACCOUNT_PREFIX = "account:"
 
 FOR_INSERT_DIR = os.getenv("FOR_INSERT_DIR", "/data/for_insert")
 PASTA_BIBLIOTECA = os.getenv("PASTA_BIBLIOTECA", "/data/biblioteca")
@@ -102,6 +105,27 @@ def build_provider(
     """
     provider_name = settings.provider
 
+    if provider_name.startswith(PROVIDER_ACCOUNT_PREFIX):
+        try:
+            account_id = int(provider_name.removeprefix(PROVIDER_ACCOUNT_PREFIX))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Conta de provedor inválida.")
+        account = session.get(UsuarioAIProviderAccount, account_id)
+        if not account or account.usuario_id != user_id or not account.enabled:
+            raise HTTPException(
+                status_code=400,
+                detail="Conta de provedor não encontrada ou desativada.",
+            )
+        return get_provider(
+            "openai",
+            account.api_key,
+            account.base_url,
+            temperature=account.temperature,
+            top_p=account.top_p,
+            max_tokens=account.max_tokens,
+            reasoning_effort=account.reasoning_effort,
+        )
+
     if provider_name == "codex":
         creds = get_codex_credentials(user_id, session)
         token = creds.get("apiKey") or creds.get("accessToken") if creds else None
@@ -128,6 +152,95 @@ def build_provider(
         return get_provider(provider_name, settings.openai_api_key)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class ProviderAccountCreate(BaseModel):
+    name: str
+    base_url: str
+    api_key: str
+    default_model: str
+    temperature: float | None = None
+    top_p: float | None = None
+    max_tokens: int | None = None
+    reasoning_effort: str | None = None
+    enabled: bool = True
+
+
+class ProviderAccountUpdate(BaseModel):
+    name: str
+    base_url: str
+    api_key: str | None = None
+    default_model: str
+    temperature: float | None = None
+    top_p: float | None = None
+    max_tokens: int | None = None
+    reasoning_effort: str | None = None
+    enabled: bool = True
+
+
+class ProviderAccountActivate(BaseModel):
+    chat_model: str | None = None
+
+
+class ProviderAccountDiscover(BaseModel):
+    base_url: str
+    api_key: str | None = None
+    account_id: int | None = None  # editando: usa a chave salva se api_key vier vazia
+
+
+def _normalize_provider_url(value: str) -> str:
+    raw = value.strip().rstrip("/")
+    parsed = urlsplit(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(
+            status_code=422,
+            detail="A URL base deve ser uma URL HTTP ou HTTPS válida.",
+        )
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise HTTPException(
+            status_code=422,
+            detail="A URL base não pode conter credenciais, query ou fragmento.",
+        )
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
+
+def _validate_inference_parameters(body: ProviderAccountCreate | ProviderAccountUpdate):
+    if body.temperature is not None and not 0 <= body.temperature <= 2:
+        raise HTTPException(status_code=422, detail="Temperature deve estar entre 0 e 2.")
+    if body.top_p is not None and not 0 <= body.top_p <= 1:
+        raise HTTPException(status_code=422, detail="Top P deve estar entre 0 e 1.")
+    if body.max_tokens is not None and not 1 <= body.max_tokens <= 131072:
+        raise HTTPException(status_code=422, detail="Max tokens deve estar entre 1 e 131072.")
+    if body.reasoning_effort not in {None, "low", "medium", "high"}:
+        raise HTTPException(status_code=422, detail="Nível de raciocínio inválido.")
+
+
+def _account_or_404(
+    account_id: int, user_id: int, session: Session
+) -> UsuarioAIProviderAccount:
+    account = session.get(UsuarioAIProviderAccount, account_id)
+    if not account or account.usuario_id != user_id:
+        raise HTTPException(status_code=404, detail="Conta de provedor não encontrada.")
+    return account
+
+
+def _serialize_account(
+    account: UsuarioAIProviderAccount, selected_provider: str
+) -> dict:
+    return {
+        "id": account.id,
+        "name": account.nome,
+        "provider_type": account.provider_type,
+        "base_url": account.base_url,
+        "default_model": account.default_model,
+        "temperature": account.temperature,
+        "top_p": account.top_p,
+        "max_tokens": account.max_tokens,
+        "reasoning_effort": account.reasoning_effort,
+        "enabled": account.enabled,
+        "has_api_key": bool(account.api_key),
+        "selected": selected_provider == f"{PROVIDER_ACCOUNT_PREFIX}{account.id}",
+    }
 
 
 async def _upsert_ia_status(
@@ -286,10 +399,19 @@ async def get_ai_settings(
     session: Session = Depends(get_session),
 ):
     settings = await _get_user_settings(current_user.id, session)
+    active_account_id = None
+    if settings.provider.startswith(PROVIDER_ACCOUNT_PREFIX):
+        try:
+            active_account_id = int(
+                settings.provider.removeprefix(PROVIDER_ACCOUNT_PREFIX)
+            )
+        except ValueError:
+            pass
     return {
         "provider": settings.provider,
         "chat_model": settings.chat_model,
         "has_openai_key": bool(settings.openai_api_key),
+        "active_provider_account_id": active_account_id,
     }
 
 
@@ -300,6 +422,18 @@ async def update_ai_settings(
     session: Session = Depends(get_session),
 ):
     settings = await _get_user_settings(current_user.id, session)
+    allowed_providers = {"ollama", "openai", "codex", "claude"}
+    if body.provider.startswith(PROVIDER_ACCOUNT_PREFIX):
+        try:
+            account_id = int(body.provider.removeprefix(PROVIDER_ACCOUNT_PREFIX))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Conta de provedor inválida.")
+        account = _account_or_404(account_id, current_user.id, session)
+        if not account.enabled:
+            raise HTTPException(status_code=400, detail="Esta conta está desativada.")
+    elif body.provider not in allowed_providers:
+        raise HTTPException(status_code=422, detail="Provedor inválido.")
+
     settings.provider = body.provider
     settings.chat_model = body.chat_model or (
         OPENAI_DEFAULT_CHAT if body.provider == "openai" else OLLAMA_DEFAULT_CHAT
@@ -313,6 +447,215 @@ async def update_ai_settings(
         "chat_model": settings.chat_model,
         "has_openai_key": bool(settings.openai_api_key),
     }
+
+
+@router.get("/provider-accounts")
+async def list_provider_accounts(
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    settings = await _get_user_settings(current_user.id, session)
+    accounts = session.exec(
+        select(UsuarioAIProviderAccount)
+        .where(UsuarioAIProviderAccount.usuario_id == current_user.id)
+        .order_by(UsuarioAIProviderAccount.nome)
+    ).all()
+    return [_serialize_account(account, settings.provider) for account in accounts]
+
+
+@router.post("/provider-accounts", status_code=201)
+async def create_provider_account(
+    body: ProviderAccountCreate,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    name = body.name.strip()
+    api_key = body.api_key.strip()
+    default_model = body.default_model.strip()
+    if not name or not api_key or not default_model:
+        raise HTTPException(
+            status_code=422,
+            detail="Nome, chave da API e modelo padrão são obrigatórios.",
+        )
+    _validate_inference_parameters(body)
+    duplicate = session.exec(
+        select(UsuarioAIProviderAccount).where(
+            UsuarioAIProviderAccount.usuario_id == current_user.id,
+            UsuarioAIProviderAccount.nome == name,
+        )
+    ).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="Já existe uma conta com esse nome.")
+
+    account = UsuarioAIProviderAccount(
+        usuario_id=current_user.id,
+        nome=name,
+        base_url=_normalize_provider_url(body.base_url),
+        api_key=api_key,
+        default_model=default_model,
+        temperature=body.temperature,
+        top_p=body.top_p,
+        max_tokens=body.max_tokens,
+        reasoning_effort=body.reasoning_effort,
+        enabled=body.enabled,
+    )
+    session.add(account)
+    session.commit()
+    session.refresh(account)
+    settings = await _get_user_settings(current_user.id, session)
+    return _serialize_account(account, settings.provider)
+
+
+@router.put("/provider-accounts/{account_id}")
+async def update_provider_account(
+    account_id: int,
+    body: ProviderAccountUpdate,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    account = _account_or_404(account_id, current_user.id, session)
+    name = body.name.strip()
+    default_model = body.default_model.strip()
+    if not name or not default_model:
+        raise HTTPException(status_code=422, detail="Nome e modelo padrão são obrigatórios.")
+    _validate_inference_parameters(body)
+    duplicate = session.exec(
+        select(UsuarioAIProviderAccount).where(
+            UsuarioAIProviderAccount.usuario_id == current_user.id,
+            UsuarioAIProviderAccount.nome == name,
+            UsuarioAIProviderAccount.id != account_id,
+        )
+    ).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="Já existe uma conta com esse nome.")
+
+    account.nome = name
+    account.base_url = _normalize_provider_url(body.base_url)
+    account.default_model = default_model
+    account.temperature = body.temperature
+    account.top_p = body.top_p
+    account.max_tokens = body.max_tokens
+    account.reasoning_effort = body.reasoning_effort
+    account.enabled = body.enabled
+    if body.api_key is not None and body.api_key.strip():
+        account.api_key = body.api_key.strip()
+
+    settings = await _get_user_settings(current_user.id, session)
+    if not account.enabled and settings.provider == f"{PROVIDER_ACCOUNT_PREFIX}{account.id}":
+        settings.provider = "ollama"
+        settings.chat_model = OLLAMA_DEFAULT_CHAT
+        session.add(settings)
+    session.add(account)
+    session.commit()
+    session.refresh(account)
+    return _serialize_account(account, settings.provider)
+
+
+@router.delete("/provider-accounts/{account_id}", status_code=204)
+async def delete_provider_account(
+    account_id: int,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    account = _account_or_404(account_id, current_user.id, session)
+    settings = await _get_user_settings(current_user.id, session)
+    if settings.provider == f"{PROVIDER_ACCOUNT_PREFIX}{account.id}":
+        settings.provider = "ollama"
+        settings.chat_model = OLLAMA_DEFAULT_CHAT
+        session.add(settings)
+    session.delete(account)
+    session.commit()
+
+
+@router.post("/provider-accounts/{account_id}/activate")
+async def activate_provider_account(
+    account_id: int,
+    body: ProviderAccountActivate,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    account = _account_or_404(account_id, current_user.id, session)
+    if not account.enabled:
+        raise HTTPException(status_code=400, detail="Esta conta está desativada.")
+    chosen_model = (body.chat_model or account.default_model).strip()
+    if not chosen_model:
+        raise HTTPException(status_code=422, detail="Informe um modelo para ativar a conta.")
+    settings = await _get_user_settings(current_user.id, session)
+    settings.provider = f"{PROVIDER_ACCOUNT_PREFIX}{account.id}"
+    settings.chat_model = chosen_model
+    session.add(settings)
+    session.commit()
+    return {
+        "provider": settings.provider,
+        "chat_model": settings.chat_model,
+        "active_provider_account_id": account.id,
+    }
+
+
+@router.post("/provider-accounts/{account_id}/test")
+async def test_provider_account(
+    account_id: int,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    account = _account_or_404(account_id, current_user.id, session)
+    try:
+        provider = get_provider(
+            "openai",
+            account.api_key,
+            account.base_url,
+            temperature=account.temperature,
+            top_p=account.top_p,
+            max_tokens=account.max_tokens,
+            reasoning_effort=account.reasoning_effort,
+        )
+        try:
+            models = await provider.list_models()
+            return {"ok": True, "models": models[:100], "model_discovery": True}
+        except Exception:
+            # Alguns gateways OpenAI-compatible não expõem GET /models.
+            # Nesse caso, valida a credencial com uma inferência mínima.
+            async for _ in provider.chat(
+                messages=[{"role": "user", "content": "Responda apenas OK."}],
+                model=account.default_model,
+                stream=False,
+            ):
+                break
+            return {
+                "ok": True,
+                "models": [account.default_model],
+                "model_discovery": False,
+            }
+    except Exception as exc:
+        logger.warning("Falha ao testar conta de provedor %s: %s", account.id, exc)
+        raise HTTPException(
+            status_code=400,
+            detail="Não foi possível conectar ao provedor. Verifique URL, chave e disponibilidade do serviço.",
+        )
+
+
+@router.post("/provider-accounts/discover")
+async def discover_provider_models(
+    body: ProviderAccountDiscover,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Testa URL + chave antes de salvar e devolve os modelos (GET /models)."""
+    base_url = _normalize_provider_url(body.base_url)
+    api_key = (body.api_key or "").strip()
+    if not api_key and body.account_id is not None:
+        api_key = _account_or_404(body.account_id, current_user.id, session).api_key
+    if not api_key:
+        raise HTTPException(status_code=422, detail="Informe a chave da API.")
+    try:
+        models = await get_provider("openai", api_key, base_url).list_models()
+    except Exception as exc:
+        logger.warning("Falha ao listar modelos de %s: %s", base_url, exc)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Não foi possível listar os modelos: {str(exc)[:300]}",
+        )
+    return {"ok": True, "models": models}
 
 
 class ExtractMetadataRequest(BaseModel):

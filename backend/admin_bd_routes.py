@@ -514,8 +514,8 @@ def delete_user(
     if not user:
         raise HTTPException(status_code=404, detail='Usuário não encontrado')
     # Limpa dados do usuário antes de excluir
-    from models import ListaLeitura, Anotacao, ColecaoLivro, ColecaoLivroItem, EstudioArtefato, UsuarioAISettings
-    for model_class in [ListaLeitura, Anotacao, EstudioArtefato, UsuarioAISettings]:
+    from models import ListaLeitura, Anotacao, ColecaoLivro, ColecaoLivroItem, EstudioArtefato, UsuarioAISettings, UsuarioAIProviderAccount
+    for model_class in [ListaLeitura, Anotacao, EstudioArtefato, UsuarioAISettings, UsuarioAIProviderAccount]:
         items = session.exec(select(model_class).where(model_class.usuario_id == user_id)).all()
         for item in items:
             session.delete(item)

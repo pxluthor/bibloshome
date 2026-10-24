@@ -1,8 +1,14 @@
 
 from typing import Optional, Dict, Any, List
 from sqlmodel import Field, SQLModel
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, JSON, UniqueConstraint, LargeBinary
+
+
+def utcnow() -> datetime:
+    # sqlmodel >= 0.0.47 rejects naive datetimes on insert/update
+    return datetime.now(timezone.utc)
+
 
 class Livro(SQLModel, table=True):
     __tablename__ = "livros"
@@ -19,7 +25,7 @@ class Livro(SQLModel, table=True):
     sinopse: Optional[str]
     caminho: Optional[str] = Field(default=None, max_length=1000)
     capa: Optional[bytes]  = Field(default=None, sa_column=Column(LargeBinary(length=16777215)))  # MEDIUMBLOB
-    data_adicao: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    data_adicao: Optional[datetime] = Field(default_factory=utcnow)
     tags: Optional[List] = Field(default=None, sa_column=Column(JSON))
     is_duplicate: bool = Field(default=False)
 
@@ -60,7 +66,7 @@ class Usuario(SQLModel, table=True):
     email: str = Field(unique=True, index=True)
     senha_hash: str
     is_admin: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
 
 # --- LISTA DE LEITURA ---
 class ListaLeitura(SQLModel, table=True):
@@ -70,7 +76,7 @@ class ListaLeitura(SQLModel, table=True):
     usuario_id: int = Field(foreign_key="usuario.id")
     livro_id: int = Field(foreign_key="livros.id") 
     status: str = Field(default="quero_ler") 
-    data_adicao: datetime = Field(default_factory=datetime.utcnow)
+    data_adicao: datetime = Field(default_factory=utcnow)
 
 class ListaLeituraUpdate(SQLModel):
     status: str
@@ -81,7 +87,7 @@ class ColecaoLivro(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     usuario_id: int = Field(foreign_key="usuario.id")
     nome: str
-    data_criacao: datetime = Field(default_factory=datetime.utcnow)
+    data_criacao: datetime = Field(default_factory=utcnow)
 
 class ColecaoLivroItem(SQLModel, table=True):
     __tablename__ = "colecoes_livros_itens"
@@ -89,7 +95,7 @@ class ColecaoLivroItem(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     colecao_id: int = Field(foreign_key="colecoes_livros.id")
     livro_id: int = Field(foreign_key="livros.id")
-    data_adicao: datetime = Field(default_factory=datetime.utcnow)
+    data_adicao: datetime = Field(default_factory=utcnow)
 
 class ColecaoLivroCreate(SQLModel):
     nome: str
@@ -117,8 +123,8 @@ class Anotacao(SQLModel, table=True):
     dados_json: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
     
     updated_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        sa_column_kwargs={"onupdate": datetime.utcnow}
+        default_factory=utcnow,
+        sa_column_kwargs={"onupdate": utcnow}
     )
 
 # Modelo para validação do que o frontend envia
@@ -144,6 +150,31 @@ class UsuarioAISettingsUpdate(SQLModel):
     chat_model: str
     openai_api_key: Optional[str] = None
 
+
+class UsuarioAIProviderAccount(SQLModel, table=True):
+    __tablename__ = "usuario_ai_provider_accounts"
+    __table_args__ = (
+        UniqueConstraint("usuario_id", "nome", name="uq_usuario_ai_provider_nome"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    nome: str = Field(max_length=120)
+    provider_type: str = Field(default="openai_compatible", max_length=40)
+    base_url: str = Field(max_length=1000)
+    api_key: str = Field(max_length=2048)
+    default_model: str = Field(max_length=255)
+    temperature: Optional[float] = Field(default=None)
+    top_p: Optional[float] = Field(default=None)
+    max_tokens: Optional[int] = Field(default=None)
+    reasoning_effort: Optional[str] = Field(default=None, max_length=20)
+    enabled: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(
+        default_factory=utcnow,
+        sa_column_kwargs={"onupdate": utcnow},
+    )
+
 class LivroIAStatus(SQLModel, table=True):
     __tablename__ = "livros_ia_status"
 
@@ -152,7 +183,7 @@ class LivroIAStatus(SQLModel, table=True):
     status: str = Field(default="not_indexed")  # not_indexed | indexing | ready | error
     pages_indexed: int = Field(default=0)
     error_msg: Optional[str] = Field(default=None)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
 
 
 # --- PEDIDOS DE LIVROS ---
@@ -165,7 +196,7 @@ class EstudioArtefato(SQLModel, table=True):
     livro_id: int = Field(foreign_key="livros.id", index=True)
     tipo: str  # quiz | flashcards | mindmap | audio_resumo | resumo | insights | reflexao | sumario | videos | podcast | video
     conteudo: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
-    saved_at: datetime = Field(default_factory=datetime.utcnow)
+    saved_at: datetime = Field(default_factory=utcnow)
 
 
 class PedidoLivro(SQLModel, table=True):
@@ -177,8 +208,8 @@ class PedidoLivro(SQLModel, table=True):
     autor: str
     editora: str
     status: str = Field(default="pendente")  # pendente, em_analise, aprovado, recusado
-    data_criacao: datetime = Field(default_factory=datetime.utcnow)
-    data_atualizacao: datetime = Field(default_factory=datetime.utcnow)
+    data_criacao: datetime = Field(default_factory=utcnow)
+    data_atualizacao: datetime = Field(default_factory=utcnow)
     observacoes: Optional[str] = Field(default=None)
 
 # Modelos Pydantic para validação de pedidos

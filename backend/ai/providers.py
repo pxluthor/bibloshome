@@ -126,11 +126,25 @@ class OllamaProvider(AIProvider):
 
 
 class OpenAIProvider(AIProvider):
-    def __init__(self, api_key: str):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: Optional[str] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        reasoning_effort: Optional[str] = None,
+    ):
         self.api_key = api_key
-        from openai import AsyncOpenAI
-
-        self._client = AsyncOpenAI(api_key=api_key)
+        self.base_url = base_url.rstrip("/") if base_url else None
+        self.temperature = temperature
+        self.top_p = top_p
+        self.max_tokens = max_tokens
+        self.reasoning_effort = reasoning_effort
+        client_options: dict[str, Any] = {"api_key": api_key}
+        if self.base_url:
+            client_options["base_url"] = self.base_url
+        self._client = AsyncOpenAI(**client_options)
 
     async def chat(
         self,
@@ -143,21 +157,27 @@ class OpenAIProvider(AIProvider):
         if system:
             msgs = [{"role": "system", "content": system}, *messages]
 
+        request_options: dict[str, Any] = {
+            "model": model,
+            "messages": msgs,
+            "stream": stream,
+        }
+        if self.temperature is not None:
+            request_options["temperature"] = self.temperature
+        if self.top_p is not None:
+            request_options["top_p"] = self.top_p
+        if self.max_tokens is not None:
+            request_options["max_tokens"] = self.max_tokens
+        if self.reasoning_effort:
+            request_options["reasoning_effort"] = self.reasoning_effort
+
         if stream:
-            resp = await self._client.chat.completions.create(
-                model=model,
-                messages=msgs,
-                stream=stream,
-            )
+            resp = await self._client.chat.completions.create(**request_options)
             async for chunk in resp:
                 yield chunk.choices[0].delta.content or ""
             return
 
-        resp = await self._client.chat.completions.create(
-            model=model,
-            messages=msgs,
-            stream=stream,
-        )
+        resp = await self._client.chat.completions.create(**request_options)
         yield resp.choices[0].message.content
 
     async def embed(
@@ -169,6 +189,9 @@ class OpenAIProvider(AIProvider):
         return [d.embedding for d in response.data]
 
     async def list_models(self) -> list[str]:
+        if self.base_url:
+            response = await self._client.models.list()
+            return sorted(model.id for model in response.data)
         return ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]
 
     async def is_available(self) -> bool:
@@ -217,7 +240,14 @@ class CodexOAuthProvider(AIProvider):
             {"role": m.get("role", "user"), "content": m.get("content", "")}
             for m in messages
         ]
-        payload: dict = {"model": model, "input": input_items, "stream": stream}
+        # store=False é exigido pelo backend do ChatGPT (Responses API) —
+        # sem isso ele responde 400 {"detail":"Store must be set to false"}
+        payload: dict = {
+            "model": model,
+            "input": input_items,
+            "stream": stream,
+            "store": False,
+        }
         if system:
             payload["instructions"] = system
 
@@ -384,9 +414,24 @@ class ClaudeOAuthProvider(AIProvider):
 ollama_provider = OllamaProvider()
 
 
-def get_provider(provider: str, api_key: Optional[str] = None) -> AIProvider:
+def get_provider(
+    provider: str,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    reasoning_effort: Optional[str] = None,
+) -> AIProvider:
     if provider == "openai":
         if not api_key:
             raise ValueError("OpenAI API key nao configurada")
-        return OpenAIProvider(api_key=api_key)
+        return OpenAIProvider(
+            api_key=api_key,
+            base_url=base_url,
+            temperature=temperature,
+            top_p=top_p,
+            max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
+        )
     return ollama_provider

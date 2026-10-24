@@ -569,143 +569,52 @@ const VozSubTab = ({ pageText, pageNumber }) => {
 
 // ─── PAINEL DE CONFIGURAÇÕES ──────────────────────────────────────────────────
 const AISettingsPanel = ({ onClose }) => {
-    const [providers, setProviders] = useState(null);
+    const navigate = useNavigate();
     const [settings, setSettings] = useState(null);
-    const [saving, setSaving] = useState(false);
-    const [form, setForm] = useState({ provider: 'ollama', chat_model: '', openai_api_key: '' });
+    const [accounts, setAccounts] = useState([]);
 
     useEffect(() => {
         const load = async () => {
-            const [p, s] = await Promise.all([
-                api.get('/ai/providers'),
+            const [s, a] = await Promise.all([
                 api.get('/ai/settings'),
+                api.get('/ai/provider-accounts'),
             ]);
-            setProviders(p.data);
             setSettings(s.data);
-            setForm({
-                provider: s.data.provider,
-                chat_model: s.data.chat_model,
-                openai_api_key: '',
-            });
+            setAccounts(a.data);
         };
         load();
     }, []);
 
-    const save = async () => {
-        setSaving(true);
-        try {
-            await api.put('/ai/settings', form);
-            onClose();
-        } catch (e) {
-            toast.error('Erro ao salvar: ' + e.message);
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const currentModels =
-        form.provider === 'openai'
-            ? providers?.openai?.models || []
-            : providers?.ollama?.models || [];
+    const activeAccount = accounts.find(account => account.selected);
+    const providerNames = { ollama: 'Ollama', openai: 'OpenAI', codex: 'Codex Pro', claude: 'Claude' };
+    const providerName = activeAccount?.name || providerNames[settings?.provider] || 'Provedor personalizado';
 
     return (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <div className="bg-white rounded-lg shadow-2xl w-full max-w-sm p-6">
                 <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
                     <Settings size={18} /> Configurações de IA
                 </h3>
 
-                {!providers ? (
+                {!settings ? (
                     <div className="flex justify-center py-8">
                         <Loader2 className="animate-spin text-blue-500" size={24} />
                     </div>
                 ) : (
                     <div className="space-y-4">
-                        {/* Provider */}
-                        <div>
-                            <label className="text-xs font-semibold text-gray-500 uppercase">Provider</label>
-                            <div className="flex gap-2 mt-1">
-                                {['ollama', 'openai'].map(p => (
-                                    <button
-                                        key={p}
-                                        onClick={() => setForm(f => ({ ...f, provider: p, chat_model: '' }))}
-                                        className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition ${
-                                            form.provider === p
-                                                ? 'bg-blue-600 text-white border-blue-600'
-                                                : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
-                                        }`}
-                                    >
-                                        {p === 'ollama' ? '🦙 Ollama' : '🤖 OpenAI'}
-                                        {p === 'ollama' && (
-                                            <span
-                                                className={`ml-1 text-xs ${
-                                                    providers.ollama.available
-                                                        ? 'text-green-400'
-                                                        : 'text-red-400'
-                                                }`}
-                                            >
-                                                {providers.ollama.available ? '●' : '○'}
-                                            </span>
-                                        )}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Model */}
-                        <div>
-                            <label className="text-xs font-semibold text-gray-500 uppercase">Modelo</label>
-                            {currentModels.length > 0 ? (
-                                <select
-                                    value={form.chat_model}
-                                    onChange={e => setForm(f => ({ ...f, chat_model: e.target.value }))}
-                                    className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                    <option value="">Selecionar modelo…</option>
-                                    {currentModels.map(m => (
-                                        <option key={m} value={m}>{m}</option>
-                                    ))}
-                                </select>
-                            ) : (
-                                <input
-                                    value={form.chat_model}
-                                    onChange={e => setForm(f => ({ ...f, chat_model: e.target.value }))}
-                                    placeholder={form.provider === 'openai' ? 'gpt-4o-mini' : 'llama3.1:8b'}
-                                    className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                />
-                            )}
-                        </div>
-
-                        {/* OpenAI Key */}
-                        {form.provider === 'openai' && (
+                        <div className="border border-gray-200 rounded-lg p-4 space-y-3">
                             <div>
-                                <label className="text-xs font-semibold text-gray-500 uppercase">
-                                    OpenAI API Key {settings?.has_openai_key && <span className="text-green-500">(configurada)</span>}
-                                </label>
-                                <input
-                                    type="password"
-                                    value={form.openai_api_key}
-                                    onChange={e => setForm(f => ({ ...f, openai_api_key: e.target.value }))}
-                                    placeholder={settings?.has_openai_key ? '••••••• (manter atual)' : 'sk-...'}
-                                    className="mt-1 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white text-gray-800 outline-none focus:ring-2 focus:ring-blue-500"
-                                />
+                                <p className="text-xs font-semibold text-gray-500 uppercase">Provedor ativo</p>
+                                <p className="text-sm font-semibold text-gray-900 mt-1">{providerName}</p>
                             </div>
-                        )}
-
+                            <div>
+                                <p className="text-xs font-semibold text-gray-500 uppercase">Modelo</p>
+                                <p className="text-sm font-mono text-gray-800 mt-1 break-all">{settings.chat_model}</p>
+                            </div>
+                        </div>
                         <div className="flex gap-2 pt-2">
-                            <button
-                                onClick={onClose}
-                                className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition"
-                            >
-                                Cancelar
-                            </button>
-                            <button
-                                onClick={save}
-                                disabled={saving}
-                                className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 transition"
-                            >
-                                {saving ? <Loader2 size={14} className="animate-spin mx-auto" /> : 'Salvar'}
-                            </button>
+                            <button onClick={onClose} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition">Fechar</button>
+                            <button onClick={() => navigate('/configuracoes')} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition">Gerenciar</button>
                         </div>
                     </div>
                 )}
