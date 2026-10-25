@@ -1,13 +1,17 @@
+import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Body, Response, Query, Header, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 limiter = Limiter(key_func=get_remote_address)
+logger = logging.getLogger(__name__)
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select, func
 import hashlib
 import re
+import secrets
+from datetime import timedelta
 import unicodedata
 from datetime import timezone
 from pydantic import BaseModel, Field
@@ -17,6 +21,7 @@ from typing import List, Optional
 from datetime import datetime
 from database import get_session
 from models import utcnow, Feedback, LivroAcesso, Usuario, UsuarioCreate, UsuarioLogin, ListaLeitura, ListaLeituraUpdate, ColecaoLivro, ColecaoLivroItem, ColecaoLivroCreate, Livro, Anotacao, AnotacaoUpdate, LivroRead, LivroUpdate, PedidoLivro, PedidoLivroCreate, PedidoLivroUpdate
+from mailer import email_configurado, enviar_codigo_verificacao
 from services import get_pdf_service, get_translation_service, PDFService, TranslationService
 from auth import get_password_hash, verify_password, create_access_token, get_current_user, oauth2_scheme
 
@@ -356,32 +361,119 @@ def translate_page(
 @router.post("/auth/register", status_code=201)
 @limiter.limit("5/minute")
 def register(request: Request, user: UsuarioCreate, session: Session = Depends(get_session)):
-    # Verifica se email já existe
-    existing_user = session.exec(select(Usuario).where(Usuario.email == user.email)).first()
-    if existing_user:
+    email = user.email.strip().lower()
+    if len(user.senha) < 6:
+        raise HTTPException(status_code=400, detail="A senha precisa ter pelo menos 6 caracteres")
+    existing_user = session.exec(select(Usuario).where(Usuario.email == email)).first()
+    if existing_user and existing_user.email_verificado:
         raise HTTPException(status_code=400, detail="Email já cadastrado")
-    
-    # Cria usuário com senha hash
-    hashed_password = get_password_hash(user.senha)
-    # Importante: O SQL espera 'nome', 'email', 'senha_hash', 'is_admin'
-    novo_usuario = Usuario(nome=user.nome, email=user.email, senha_hash=hashed_password, is_admin=False)
-    
+
+    verificar = email_configurado()
+    if not verificar:
+        logger.warning("SMTP não configurado: cadastro de %s sem verificação de e-mail", email)
+    # Unverified account with the same e-mail: restart the sign-up instead of locking the address
+    novo_usuario = existing_user or Usuario(email=email, is_admin=False)
+    novo_usuario.nome = user.nome
+    novo_usuario.senha_hash = get_password_hash(user.senha)
+    novo_usuario.email_verificado = not verificar
     session.add(novo_usuario)
     session.commit()
-    return {"message": "Usuário criado com sucesso"}
+    if verificar:
+        _enviar_otp(novo_usuario, session)
+    return {"message": "Usuário criado com sucesso", "verificar_email": verificar}
+
+
+OTP_VALIDADE_MIN = 10
+OTP_MAX_TENTATIVAS = 5
+
+
+def _otp_hash(user_id: int, codigo: str) -> str:
+    return hashlib.sha256(f"{user_id}:{codigo}".encode()).hexdigest()
+
+
+def _enviar_otp(usuario: Usuario, session: Session) -> None:
+    codigo = f"{secrets.randbelow(10**6):06d}"
+    usuario.otp_hash = _otp_hash(usuario.id, codigo)
+    usuario.otp_expira = utcnow() + timedelta(minutes=OTP_VALIDADE_MIN)
+    usuario.otp_tentativas = 0
+    session.add(usuario)
+    session.commit()
+    try:
+        enviar_codigo_verificacao(usuario.email, usuario.nome, codigo, OTP_VALIDADE_MIN)
+    except Exception as exc:
+        logger.error("Falha ao enviar código para %s: %s", usuario.email, exc)
+        raise HTTPException(status_code=502, detail="Não foi possível enviar o e-mail com o código. Tente novamente.")
+
+
+def _login_payload(user: Usuario) -> dict:
+    return {
+        "access_token": create_access_token(data={"sub": user.email}),
+        "token_type": "bearer",
+        "user_name": user.nome,
+        "user_id": user.id,
+        "is_admin": user.is_admin,
+    }
+
+
+class VerificarEmailBody(BaseModel):
+    email: str
+    codigo: str = Field(min_length=6, max_length=6)
+
+
+class ReenviarCodigoBody(BaseModel):
+    email: str
+
+
+@router.post("/auth/verify-email")
+@limiter.limit("10/minute")
+def verificar_email(request: Request, body: VerificarEmailBody, session: Session = Depends(get_session)):
+    """Confirms the sign-up code and logs the user in."""
+    user = session.exec(select(Usuario).where(Usuario.email == body.email.strip().lower())).first()
+    invalido = HTTPException(status_code=400, detail="Código inválido ou expirado.")
+    if not user or user.email_verificado or not user.otp_hash:
+        raise invalido
+    expira = user.otp_expira
+    if expira and expira.tzinfo is None:
+        expira = expira.replace(tzinfo=timezone.utc)  # MySQL DATETIME comes back naive (stored as UTC)
+    if not expira or expira < utcnow() or user.otp_tentativas >= OTP_MAX_TENTATIVAS:
+        raise HTTPException(status_code=400, detail="Código expirado ou tentativas esgotadas. Peça um novo código.")
+    if not secrets.compare_digest(user.otp_hash, _otp_hash(user.id, body.codigo.strip())):
+        user.otp_tentativas += 1
+        session.add(user)
+        session.commit()
+        raise invalido
+    user.email_verificado = True
+    user.otp_hash = None
+    user.otp_expira = None
+    user.otp_tentativas = 0
+    session.add(user)
+    session.commit()
+    return _login_payload(user)
+
+
+@router.post("/auth/resend-code")
+@limiter.limit("3/minute")
+def reenviar_codigo(request: Request, body: ReenviarCodigoBody, session: Session = Depends(get_session)):
+    user = session.exec(select(Usuario).where(Usuario.email == body.email.strip().lower())).first()
+    if user and not user.email_verificado and email_configurado():
+        _enviar_otp(user, session)
+    # Same answer whether the account exists or not: no e-mail enumeration
+    return {"message": "Se houver um cadastro pendente para este e-mail, um novo código foi enviado."}
 
 # --- 2. LOGIN (GERAR TOKEN) ---
 @router.post("/auth/login")
 @limiter.limit("10/minute")
 def login(request: Request, user_data: UsuarioLogin, session: Session = Depends(get_session)):
     # Busca usuário pelo email
-    user = session.exec(select(Usuario).where(Usuario.email == user_data.email)).first()
+    user = session.exec(select(Usuario).where(Usuario.email == user_data.email.strip().lower())).first()
     
     # Valida senha
     if not user or not verify_password(user_data.senha, user.senha_hash):
         raise HTTPException(status_code=400, detail="Email ou senha incorretos")
     if user.bloqueado:
         raise HTTPException(status_code=403, detail="Acesso bloqueado. Fale com o administrador.")
+    if not user.email_verificado:
+        raise HTTPException(status_code=403, detail="E-mail ainda não confirmado.")
     
     # Gera Token
     access_token = create_access_token(data={"sub": user.email})

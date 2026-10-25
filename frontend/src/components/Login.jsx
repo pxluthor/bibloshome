@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { takeReturnPath } from '../utils/navigation';
 import api from '../services/api';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Eye, EyeOff, Library, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, Library, Loader2, MailCheck } from 'lucide-react';
 import { toast } from '../utils/toast';
 
 // Login + cadastro num único cartão: no desktop o painel colorido desliza entre os dois formulários.
@@ -59,6 +59,85 @@ const ErrorBox = ({ message }) => message ? (
     <p role="alert" className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{message}</p>
 ) : null;
 
+const saveSession = (data) => {
+    localStorage.setItem('token', data.access_token);
+    localStorage.setItem('userName', data.user_name);
+    localStorage.setItem('userId', data.user_id);
+    localStorage.setItem('isAdmin', data.is_admin);
+};
+
+const RESEND_COOLDOWN = 30;
+
+// Step shown after sign-up (or a login with an unconfirmed e-mail): 6-digit code sent by e-mail
+const VerifyEmailStep = ({ email, onBack, onVerified }) => {
+    const [codigo, setCodigo] = useState('');
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [cooldown, setCooldown] = useState(RESEND_COOLDOWN);
+
+    useEffect(() => {
+        if (cooldown <= 0) return undefined;
+        const timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
+        return () => clearTimeout(timer);
+    }, [cooldown]);
+
+    const verify = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        setError('');
+        try {
+            const { data } = await api.post('/auth/verify-email', { email, codigo });
+            onVerified(data);
+        } catch (err) {
+            setError(err.response?.data?.detail || 'Não foi possível verificar o código.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const resend = async () => {
+        setCooldown(RESEND_COOLDOWN);
+        try {
+            await api.post('/auth/resend-code', { email });
+            toast.success('Enviamos um novo código.');
+        } catch (err) {
+            setError(err.response?.data?.detail || 'Não foi possível reenviar agora.');
+        }
+    };
+
+    return (
+        <form onSubmit={verify} className="w-full max-w-sm rounded-3xl bg-white shadow-xl p-6 space-y-4" aria-label="Confirmar e-mail">
+            <div className="flex flex-col items-center gap-2 text-center">
+                <span className="bg-blue-600 text-white p-2.5 rounded-xl"><MailCheck size={22} /></span>
+                <h1 className="text-xl font-bold text-gray-900">Confirme seu e-mail</h1>
+                <p className="text-sm text-gray-500">Enviamos um código de 6 dígitos para <strong className="text-gray-800 break-all">{email}</strong>. Ele vale por 10 minutos.</p>
+            </div>
+            <ErrorBox message={error} />
+            <label htmlFor="otp" className="sr-only">Código de verificação</label>
+            <input
+                id="otp"
+                value={codigo}
+                onChange={(e) => setCodigo(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="000000"
+                required
+                minLength={6}
+                maxLength={6}
+                autoFocus
+                className={`${inputClass} text-center text-2xl font-bold tracking-[0.5em]`}
+            />
+            <SubmitButton loading={loading}>Verificar</SubmitButton>
+            <div className="flex items-center justify-between text-sm">
+                <button type="button" onClick={onBack} className="text-gray-500 hover:text-gray-800">Voltar</button>
+                <button type="button" onClick={resend} disabled={cooldown > 0} className="font-semibold text-blue-600 disabled:text-gray-400">
+                    {cooldown > 0 ? `Reenviar em ${cooldown}s` : 'Reenviar código'}
+                </button>
+            </div>
+        </form>
+    );
+};
+
 const Login = ({ initialMode = 'login' }) => {
     const navigate = useNavigate();
     const location = useLocation();
@@ -72,6 +151,7 @@ const Login = ({ initialMode = 'login' }) => {
     const [showForgot, setShowForgot] = useState(false);
 
     const [reg, setReg] = useState({ nome: '', email: '', senha: '' });
+    const [verifyEmail, setVerifyEmail] = useState(null); // e-mail waiting for its code
     const [regError, setRegError] = useState('');
     const [regLoading, setRegLoading] = useState(false);
 
@@ -88,14 +168,17 @@ const Login = ({ initialMode = 'login' }) => {
         setLoginError('');
         try {
             const response = await api.post('/auth/login', { email, senha: password });
-            localStorage.setItem('token', response.data.access_token);
-            localStorage.setItem('userName', response.data.user_name);
-            localStorage.setItem('userId', response.data.user_id);
-            localStorage.setItem('isAdmin', response.data.is_admin);
+            saveSession(response.data);
             // Volta para a tela onde a sessão expirou (ou home)
             navigate(takeReturnPath('/'), { replace: true });
         } catch (err) {
-            setLoginError(err.response?.status === 403 ? err.response.data.detail : 'Email ou senha inválidos');
+            const detail = err.response?.data?.detail;
+            if (err.response?.status === 403 && /confirmado/i.test(detail || '')) {
+                api.post('/auth/resend-code', { email }).catch(() => {});
+                setVerifyEmail(email.trim().toLowerCase());
+                return;
+            }
+            setLoginError(err.response?.status === 403 ? detail : 'Email ou senha inválidos');
         } finally {
             setLoginLoading(false);
         }
@@ -106,7 +189,11 @@ const Login = ({ initialMode = 'login' }) => {
         setRegLoading(true);
         setRegError('');
         try {
-            await api.post('/auth/register', reg);
+            const { data } = await api.post('/auth/register', reg);
+            if (data.verificar_email) {
+                setVerifyEmail(reg.email.trim().toLowerCase());
+                return;
+            }
             toast.success('Cadastro realizado! Faça login.');
             setEmail(reg.email);
             setPassword('');
@@ -172,6 +259,22 @@ const Login = ({ initialMode = 'login' }) => {
     const hero = isRegister
         ? { title: 'Bem-vindo de volta', text: 'Entre para continuar suas leituras de onde parou.', button: 'Entrar', next: 'login' }
         : { title: 'Olá, leitor', text: 'Crie sua conta e leve sua biblioteca para qualquer lugar.', button: 'Cadastrar', next: 'register' };
+
+    if (verifyEmail) {
+        return (
+            <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+                <VerifyEmailStep
+                    email={verifyEmail}
+                    onBack={() => setVerifyEmail(null)}
+                    onVerified={(data) => {
+                        saveSession(data);
+                        toast.success('E-mail confirmado. Bem-vindo!');
+                        navigate(takeReturnPath('/'), { replace: true });
+                    }}
+                />
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">

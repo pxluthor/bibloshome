@@ -48,6 +48,12 @@ services:
       GOOGLE_BOOKS_API_KEY: ${GOOGLE_BOOKS_API_KEY:-${GOOGLE_API_KEY:-}}
       # Embeddings (RAG) no container ollama abaixo; o chat via Ollama continua em OLLAMA_BASE_URL
       OLLAMA_EMBED_URL: http://ollama:11434
+      # Código de verificação do cadastro por e-mail (mesma conta SMTP do Builder.IA); vazio = sem verificação
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
     ports:
       - "8001:8001"
       # Callbacks OAuth (Codex/Claude) — o navegador do host redireciona para

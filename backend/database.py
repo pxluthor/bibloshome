@@ -40,6 +40,11 @@ def create_db_and_tables():
         "bloqueado": "TINYINT(1) NOT NULL DEFAULT 0",
         "reset_token_hash": "VARCHAR(64) NULL",
         "reset_expira": "DATETIME NULL",
+        # DEFAULT 1: quem já tinha conta antes da verificação por e-mail continua entrando
+        "email_verificado": "TINYINT(1) NOT NULL DEFAULT 1",
+        "otp_hash": "VARCHAR(64) NULL",
+        "otp_expira": "DATETIME NULL",
+        "otp_tentativas": "INTEGER NOT NULL DEFAULT 0",
     })
     _ensure_estudio_artefato_escopo()
 
