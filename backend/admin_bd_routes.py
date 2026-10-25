@@ -542,18 +542,9 @@ def create_reset_link(
     return {'path': f'/redefinir-senha?token={token}', 'expira': user.reset_expira}
 
 
-@router.delete('/users/{user_id}')
-def delete_user(
-    user_id: int,
-    current_user: Usuario = Depends(get_current_user),
-    session: Session = Depends(get_session),
-):
-    _require_admin(current_user)
-    if user_id == current_user.id:
-        raise HTTPException(status_code=400, detail='Voce nao pode excluir sua propria conta')
-    user = session.get(Usuario, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail='Usuário não encontrado')
+def excluir_usuario(session: Session, user: Usuario) -> None:
+    """Remove o usuário e todos os dados dele (lista, coleções, IA, tokens, vínculos)."""
+    user_id = user.id
     # Limpa dados do usuário antes de excluir
     from models import ListaLeitura, Anotacao, ColecaoLivro, ColecaoLivroItem, EstudioArtefato, UsuarioAISettings, UsuarioAIProviderAccount, LivroAcesso, Feedback, UsuarioIdentidade
     for model_class in [ListaLeitura, Anotacao, EstudioArtefato, UsuarioAISettings, UsuarioAIProviderAccount, LivroAcesso, Feedback, UsuarioIdentidade]:
@@ -576,6 +567,21 @@ def delete_user(
     session.flush()
     session.delete(user)
     session.commit()
+
+
+@router.delete('/users/{user_id}')
+def delete_user(
+    user_id: int,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _require_admin(current_user)
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail='Voce nao pode excluir sua propria conta')
+    user = session.get(Usuario, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail='Usuário não encontrado')
+    excluir_usuario(session, user)
     return {'message': f'Usuário {user.nome} excluído com sucesso'}
 
 

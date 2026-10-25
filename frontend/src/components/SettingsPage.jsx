@@ -40,6 +40,69 @@ function ModelList({ models, value, onChange, accent = 'blue' }) {
     );
 }
 
+const MYGROUPS_LINK_MSGS = {
+    vinculado: 'Conta MyGroups vinculada. Agora o "Entrar com MyGroups" abre esta conta.',
+    ja_vinculado: 'Essa conta do MyGroups já está vinculada a outra conta do BiblosHome criada com senha.',
+    outra_conta_mygroups: 'Esta conta já está vinculada a outra conta do MyGroups.',
+    cancelado: 'Vínculo cancelado.',
+    state_invalido: 'O pedido de vínculo expirou. Tente novamente.',
+    expirado: 'O código do MyGroups expirou. Tente novamente.',
+    indisponivel: 'O MyGroups está indisponível no momento.',
+    bloqueado: 'Conta bloqueada.',
+};
+
+// Links this (password-proven) account to MyGroups; same-origin calls through the nginx /api proxy
+const MyGroupsLinkCard = () => {
+    const [status, setStatus] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const auth = { Authorization: `Bearer ${localStorage.getItem('token')}` };
+
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const ok = params.get('mygroups');
+        const erro = params.get('mygroups_erro');
+        if (ok) toast.success(MYGROUPS_LINK_MSGS[ok] || MYGROUPS_LINK_MSGS.vinculado);
+        if (erro) toast.error(MYGROUPS_LINK_MSGS[erro] || 'Não foi possível vincular a conta MyGroups.');
+        if (ok || erro) window.history.replaceState(null, '', '/configuracoes');
+        fetch('/api/auth/mygroups/link', { headers: auth })
+            .then((r) => (r.ok ? r.json() : null)).then(setStatus).catch(() => setStatus(null));
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const vincular = async () => {
+        setBusy(true);
+        try {
+            const r = await fetch('/api/auth/mygroups/link', { method: 'POST', headers: auth });
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(data.detail || 'Não foi possível iniciar o vínculo.');
+            window.location.assign(data.url);
+        } catch (e) {
+            toast.error(e.message);
+            setBusy(false);
+        }
+    };
+
+    return (
+        <div className="bg-white border border-gray-200 rounded-lg p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center gap-4">
+            <span aria-hidden="true" className="grid place-items-center w-10 h-10 rounded-lg bg-emerald-600 text-white font-bold shrink-0">M</span>
+            <div className="min-w-0 flex-1">
+                <h2 className="text-base font-semibold text-gray-900">Conta MyGroups</h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                    {status?.vinculado
+                        ? 'Vinculada: o "Entrar com MyGroups" abre esta conta.'
+                        : 'Vincule para entrar nesta conta pelo MyGroups. Se você já entrou pelo MyGroups antes, a conta criada naquele login é unida a esta e removida.'}
+                </p>
+            </div>
+            {status?.vinculado ? (
+                <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-700"><Check size={16} /> Vinculada</span>
+            ) : (
+                <button onClick={vincular} disabled={busy} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-60">
+                    {busy ? <Loader2 size={16} className="animate-spin" /> : <Link2 size={16} />} Vincular MyGroups
+                </button>
+            )}
+        </div>
+    );
+};
+
 export default function SettingsPage() {
     const navigate = useNavigate();
     const userName = localStorage.getItem('userName') || '';
@@ -278,6 +341,7 @@ export default function SettingsPage() {
 
                     {section === 'general' ? (
                         <section className="space-y-6 min-w-0">
+                            <MyGroupsLinkCard />
                             {activeAccount && <div className="border border-emerald-200 bg-emerald-50 rounded-lg px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3"><ShieldCheck size={20} className="text-emerald-600 shrink-0" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-emerald-900">{activeAccount.name} está em uso</p><p className="text-xs text-emerald-700 truncate">{model} · {activeAccount.base_url}</p></div><button onClick={() => setSection('accounts')} className="text-sm font-medium text-emerald-800 hover:text-emerald-950">Gerenciar</button></div>}
 
                             <div className="bg-white border border-gray-200 rounded-lg p-5 sm:p-6 space-y-5">

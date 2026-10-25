@@ -17,7 +17,7 @@ from jose import jwt
 from jose.exceptions import JOSEError
 from sqlmodel import Session, select
 
-from auth import get_password_hash
+from auth import get_current_user, get_password_hash
 from database import get_session
 from models import Usuario, UsuarioIdentidade
 
@@ -64,27 +64,81 @@ async def _discovery(client: httpx.AsyncClient) -> dict:
     return meta
 
 
-@router.get("/login")
-async def iniciar():
+async def _authorize_url(link_user_id: int | None = None) -> str:
+    """Authorization URL with fresh state/nonce/PKCE; raises when the provider is unavailable."""
     if not CLIENT_SECRET:
-        logger.error("MYGROUPS_CLIENT_SECRET não configurado")
-        return _fail("indisponivel")
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            meta = await _discovery(client)
-    except Exception as exc:
-        logger.warning("MyGroups indisponível (discovery): %s", exc)
-        return _fail("indisponivel")
-
+        raise RuntimeError("MYGROUPS_CLIENT_SECRET não configurado")
+    async with httpx.AsyncClient(timeout=10) as client:
+        meta = await _discovery(client)
     state, nonce, verifier = (secrets.token_urlsafe(32) for _ in range(3))
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     _purge(_pending)
-    _pending[state] = {"nonce": nonce, "verifier": verifier, "exp": time.time() + AUTH_TTL}
+    _pending[state] = {"nonce": nonce, "verifier": verifier, "link_user_id": link_user_id, "exp": time.time() + AUTH_TTL}
     query = urlencode({
         "response_type": "code", "client_id": CLIENT_ID, "redirect_uri": REDIRECT_URI, "scope": SCOPES,
         "state": state, "nonce": nonce, "code_challenge": challenge, "code_challenge_method": "S256",
     })
-    return RedirectResponse(f"{meta['authorization_endpoint']}?{query}", status_code=302)
+    return f"{meta['authorization_endpoint']}?{query}"
+
+
+@router.get("/login")
+async def iniciar():
+    try:
+        return RedirectResponse(await _authorize_url(), status_code=302)
+    except Exception as exc:
+        logger.warning("MyGroups indisponível (início do login): %s", exc)
+        return _fail("indisponivel")
+
+
+def _identidade(session: Session, sub: str) -> UsuarioIdentidade | None:
+    return session.exec(
+        select(UsuarioIdentidade).where(UsuarioIdentidade.issuer == ISSUER, UsuarioIdentidade.sub == sub)
+    ).first()
+
+
+@router.get("/link")
+def status_vinculo(current_user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)):
+    ident = session.exec(select(UsuarioIdentidade).where(
+        UsuarioIdentidade.usuario_id == current_user.id, UsuarioIdentidade.issuer == ISSUER)).first()
+    return {"vinculado": bool(ident), "desde": ident.criado_em if ident else None}
+
+
+@router.post("/link")
+async def iniciar_vinculo(current_user: Usuario = Depends(get_current_user)):
+    """Same-origin call with the BiblosHome login; the page then navigates to the returned URL."""
+    try:
+        return {"url": await _authorize_url(link_user_id=current_user.id)}
+    except Exception as exc:
+        logger.warning("MyGroups indisponível (início do vínculo): %s", exc)
+        raise HTTPException(status_code=503, detail="O MyGroups está indisponível no momento.")
+
+
+def _vincular_conta_existente(session: Session, user_id: int, sub: str) -> str:
+    """Links the MyGroups identity to an account the user proved (password login). Returns a status code."""
+    user = session.get(Usuario, user_id)
+    if not user or user.bloqueado:
+        return "bloqueado"
+    own = session.exec(select(UsuarioIdentidade).where(
+        UsuarioIdentidade.usuario_id == user_id, UsuarioIdentidade.issuer == ISSUER)).first()
+    ident = _identidade(session, sub)
+    if own and own.sub != sub:
+        return "outra_conta_mygroups"
+    if ident and ident.usuario_id == user_id:
+        return "vinculado"
+    if ident:
+        previous = session.get(Usuario, ident.usuario_id)
+        # Only an account created by "Entrar com MyGroups" itself may be absorbed; never a password account
+        if not previous or not previous.email.endswith("@mygroups.invalid"):
+            return "ja_vinculado"
+        ident.usuario_id = user_id
+        session.add(ident)
+        session.commit()
+        from admin_bd_routes import excluir_usuario  # late import: avoids a cycle at startup
+        excluir_usuario(session, previous)
+        return "vinculado"
+    session.add(UsuarioIdentidade(usuario_id=user_id, issuer=ISSUER, sub=sub))
+    session.commit()
+    return "vinculado"
 
 
 def _vincular(session: Session, sub: str, claims: dict) -> Usuario:
@@ -114,12 +168,14 @@ def _vincular(session: Session, sub: str, claims: dict) -> Usuario:
 async def callback(request: Request, session: Session = Depends(get_session)):
     params = request.query_params
     pending = _take(_pending, params.get("state"))
+    linking = bool(pending and pending.get("link_user_id"))
+    fail = (lambda reason: RedirectResponse(f"{APP_URL}/configuracoes?mygroups_erro={reason}", status_code=302))         if linking else _fail
     if params.get("error"):
-        return _fail("cancelado" if params["error"] == "access_denied" else "recusado")
+        return fail("cancelado" if params["error"] == "access_denied" else "recusado")
     if not pending:
-        return _fail("state_invalido")
+        return fail("state_invalido")
     if not params.get("code"):
-        return _fail("invalido")
+        return fail("invalido")
 
     try:
         async with httpx.AsyncClient(timeout=15) as client:
@@ -131,7 +187,7 @@ async def callback(request: Request, session: Session = Depends(get_session)):
                 auth=(CLIENT_ID, CLIENT_SECRET),  # client_secret_basic
             )
             if token_resp.status_code == 400 and token_resp.json().get("error") == "invalid_grant":
-                return _fail("expirado")
+                return fail("expirado")
             token_resp.raise_for_status()
             tokens = token_resp.json()
             jwks = (await client.get(meta["jwks_uri"])).raise_for_status().json()
@@ -149,14 +205,19 @@ async def callback(request: Request, session: Session = Depends(get_session)):
                 raise JOSEError("sub do userinfo difere do ID token")
     except (JOSEError, KeyError) as exc:
         logger.warning("ID token/userinfo do MyGroups rejeitado: %s", exc)
-        return _fail("invalido")
+        return fail("invalido")
     except Exception as exc:
         logger.warning("MyGroups indisponível no callback: %s", exc)
-        return _fail("indisponivel")
+        return fail("indisponivel")
+
+    if pending.get("link_user_id"):
+        resultado = _vincular_conta_existente(session, pending["link_user_id"], claims["sub"])
+        param = "mygroups" if resultado == "vinculado" else "mygroups_erro"
+        return RedirectResponse(f"{APP_URL}/configuracoes?{param}={resultado}", status_code=302)
 
     user = _vincular(session, claims["sub"], {**info, **claims})
     if user.bloqueado:
-        return _fail("bloqueado")
+        return fail("bloqueado")
 
     handoff = secrets.token_urlsafe(32)
     _purge(_handoffs)
