@@ -24,6 +24,7 @@ from sqlmodel import Session, select
 
 import unicodedata
 
+from ai.rag import open_document, query_book
 from ai_routes import SSE_HEADERS, SYSTEM_CHAT, VOICE_MAP, _corrigir_pronuncia, _get_user_settings, build_provider
 from auth import get_current_user
 from database import get_session, engine
@@ -229,7 +230,7 @@ def _extract_pages_text(
 
     doc = None
     try:
-        doc = fitz.open(file_path)
+        doc = open_document(file_path)
         total = len(doc)
 
         pages_to_read: set[int] = set()
@@ -273,7 +274,7 @@ async def get_chapters(
 
     doc = None
     try:
-        doc = fitz.open(file_path)
+        doc = open_document(file_path)
         total_pages = len(doc)
         toc = doc.get_toc()
     except Exception as exc:
@@ -756,6 +757,7 @@ CONTEXTO_SOURCE_CHARS = 14000
 BUSCA_MAX_PAGES = 6
 BUSCA_PAGE_CHARS = 2000
 BUSCA_PREFIX = "BUSCAR:"
+COMPLEMENT_PREFIX = "COMPLEMENTAR:"
 RESUMO_EXTRA_PAGES = 3
 RESUMO_EXTRA_PAGE_CHARS = 1500
 
@@ -779,13 +781,59 @@ SYSTEM_CHAT_RESUMO = (
     "\nSe a pergunta exigir detalhes que o resumo nao traz (definicao exata, codigo, exemplo, numero, citacao), "
     f"responda APENAS com uma linha no formato '{BUSCA_PREFIX} termo1; termo2' com 1 a 4 termos de busca "
     "(palavras que aparecem no texto do livro, de preferencia no idioma do livro). Nada mais."
+    "\nSe conseguiu responder mas sente que a resposta ficou incompleta (faltou exemplo, definicao exata, "
+    f"codigo ou detalhe), termine com uma ultima linha '{COMPLEMENT_PREFIX} termo1; termo2' para que o "
+    "texto completo seja consultado."
 )
+
+
+class _MarkerFilter:
+    """Streams the answer but hides a trailing 'COMPLEMENTAR: termos' line asked of the model."""
+
+    def __init__(self):
+        self.line, self.sent, self.marker, self.text = "", 0, None, ""
+
+    @staticmethod
+    def _head(line: str) -> str:
+        return line.lstrip(" *_#").upper()
+
+    def _maybe_marker(self, line: str) -> bool:
+        head = self._head(line)
+        return COMPLEMENT_PREFIX.startswith(head) or head.startswith(COMPLEMENT_PREFIX)
+
+    def feed(self, text: str) -> str:
+        out = []
+        for ch in text:
+            self.line += ch
+            if ch == "\n":
+                if self._head(self.line).startswith(COMPLEMENT_PREFIX):
+                    self.marker = self.line.strip()
+                else:
+                    out.append(self.line[self.sent:])
+                self.line, self.sent = "", 0
+            elif not self._maybe_marker(self.line):
+                out.append(self.line[self.sent:])
+                self.sent = len(self.line)
+        emitted = "".join(out)
+        self.text += emitted
+        return emitted
+
+    def finish(self) -> str:
+        if self._head(self.line).startswith(COMPLEMENT_PREFIX):
+            self.marker, rest = self.line.strip(), ""
+        else:
+            rest = self.line[self.sent:]
+        self.text += rest
+        return rest
 
 
 class EstudioChatRequest(BaseModel):
     message: str = Field(max_length=4000)
     history: list[dict] = Field(default_factory=list)
     page_ranges: list[dict] = Field(min_length=1)
+    # Where the escalation searches when the summary is not enough:
+    # "selection" = only the chosen chapters (Estúdio); "book" = whole book (reader chat)
+    rag_scope: str = Field(default="selection", pattern="^(selection|book)$")
 
 
 def _read_pages(livro: Livro, page_ranges: list[dict], pdf_service: PDFService) -> list[tuple[int, str]]:
@@ -794,7 +842,7 @@ def _read_pages(livro: Livro, page_ranges: list[dict], pdf_service: PDFService) 
         file_path = pdf_service.get_file_path(livro.caminho)
     except Exception as exc:
         raise HTTPException(status_code=404, detail="Arquivo PDF não encontrado") from exc
-    doc = fitz.open(file_path)
+    doc = open_document(file_path)
     try:
         wanted: set[int] = set()
         for r in page_ranges:
@@ -894,6 +942,7 @@ async def estudio_chat(
 
     async def generate():
         nonlocal resumo
+        previous = None
         try:
             if not resumo:
                 yield event({"status": "Preparando o resumo destes capítulos (só na primeira vez)…"})
@@ -928,39 +977,76 @@ async def estudio_chat(
 
                 # Hold back the first ~40 chars: enough to spot a lookup request or a "not found" refusal.
                 buffer, decided, wants_search = "", False, False
+                answer = _MarkerFilter()
+
+                def emit(text: str):
+                    shown = answer.feed(text)
+                    return event({"token": shown}) if shown else None
+
                 async for token in stream:
                     if decided and not wants_search:
-                        yield event({"token": token})
+                        if (ev := emit(token)):
+                            yield ev
                         continue
                     buffer += token
                     if not decided and len(buffer.lstrip()) >= 40:
                         decided, wants_search = True, needs_lookup(buffer.lstrip())
-                        if not wants_search:
-                            yield event({"token": buffer})
+                        if not wants_search and (ev := emit(buffer)):
+                            yield ev
                 if not decided:
                     # Short answer, or an empty completion (which falls through to the page lookup).
                     wants_search = not buffer.strip() or needs_lookup(buffer.lstrip())
-                    if not wants_search:
-                        yield event({"token": buffer})
+                    if not wants_search and (ev := emit(buffer)):
+                        yield ev
                 if not wants_search:
-                    return
-                head = buffer.strip()
-                terms = (
-                    [t.strip() for t in head[len(BUSCA_PREFIX):].split(";") if t.strip()][:4]
-                    if head.upper().startswith(BUSCA_PREFIX) else []
-                ) or _question_terms(body.message)
+                    if (rest := answer.finish()):
+                        yield event({"token": rest})
+                    if not answer.marker:
+                        return
+                    # Answered, but the model flagged it as incomplete: look it up and append a complement
+                    previous = answer.text.strip()
+                    terms = [t.strip() for t in answer.marker.split(":", 1)[1].split(";") if t.strip()][:4] \
+                        or _question_terms(body.message)
+                else:
+                    head = buffer.strip()
+                    terms = (
+                        [t.strip() for t in head[len(BUSCA_PREFIX):].split(";") if t.strip()][:4]
+                        if head.upper().startswith(BUSCA_PREFIX) else []
+                    ) or _question_terms(body.message)
             else:
                 terms = []
 
-            found = _search_pages(pages, terms) if terms else []
-            if found:
-                yield event({"status": "Consultando as páginas " + ", ".join(str(n) for n, _ in found) + "…"})
-                trechos = "\n\n".join(f"[Página {n}]\n{t[:BUSCA_PAGE_CHARS]}" for n, t in found)
-            else:
-                trechos = _sample_marked(pages, 12000).replace("[Pagina ", "[Página ")
+            # Escalation: exact words in the pages + semantic search (RAG) when the book is indexed
+            search_pages = pages
+            rag_ranges = [(int(r["start"]), int(r["end"])) for r in body.page_ranges]
+            if body.rag_scope == "book":
+                search_pages = await asyncio.to_thread(_read_pages, livro, [{"start": 1, "end": 10**6}], pdf_service)
+                rag_ranges = None
+            found = _search_pages(search_pages, terms) if terms else []
+            semantic = []
+            try:
+                semantic = await query_book(livro_id, " ".join([body.message, *terms]), n_results=5, page_ranges=rag_ranges)
+            except Exception as exc:  # RAG is a bonus: never break the answer because of it
+                logger.warning("Busca semântica indisponível para o livro %s: %s", livro_id, exc)
+            found_pages = {n for n, _ in found}
+            semantic = [c for c in semantic if c["page"] not in found_pages]
+
+            consulted = sorted(found_pages | {c["page"] for c in semantic})
+            if consulted:
+                kind = "busca por palavras e por significado" if semantic and found else (
+                    "busca por significado" if semantic else "busca por palavras")
+                yield event({"status": f"Consultando as páginas {', '.join(map(str, consulted[:8]))} ({kind})…"})
+            blocks = [f"[Página {n}]\n{t[:BUSCA_PAGE_CHARS]}" for n, t in found]
+            blocks += [f"[Página {c['page']}]\n{c['text']}" for c in semantic]
+            trechos = "\n\n".join(blocks) if blocks else _sample_marked(pages, 12000).replace("[Pagina ", "[Página ")
             contexto = (f"Resumo dos capítulos:\n{resumo}\n\n" if resumo else "") + f"Trechos do livro:\n{trechos}"
+            pergunta = f"Pergunta: {body.message}"
+            if previous:
+                yield event({"token": "\n\n---\n**Complemento (consultando o livro):**\n\n"})
+                pergunta += (f"\n\nResposta já dada, considerada incompleta:\n{previous}\n\n"
+                             "Complemente APENAS com o que faltou, usando os trechos; não repita o que já foi dito.")
             async for token in provider.chat(
-                messages=history + [{"role": "user", "content": f"{contexto}\n\nPergunta: {body.message}"}],
+                messages=history + [{"role": "user", "content": f"{contexto}\n\n{pergunta}"}],
                 model=settings.chat_model, system=SYSTEM_CHAT, stream=True,
             ):
                 yield event({"token": token})

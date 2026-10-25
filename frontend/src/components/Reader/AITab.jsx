@@ -10,69 +10,97 @@ import { toast } from '../../utils/toast';
 import ChatMarkdown from '../ChatMarkdown';
 
 // ─── SUB-ABA: CHAT ────────────────────────────────────────────────────────────
-const ChatSubTab = ({ livroId }) => {
+// Answers from the saved summary of the chapter being read (+ word search); when that is not
+// enough it escalates to the whole book: word search and, once the book is indexed, semantic RAG.
+// Indexing starts on demand the first time the chat is opened and never blocks the chat.
+const NEIGHBOR_PAGES = 10; // context window when the book has no table of contents
+
+const chapterFor = (chapters, page) => {
+    const containing = chapters.filter((c) => c.page_start <= page && page <= c.page_end);
+    if (!containing.length) return null;
+    return containing.reduce((best, c) => (c.page_end - c.page_start < best.page_end - best.page_start ? c : best));
+};
+
+const ChatSubTab = ({ livroId, pageNumber }) => {
     const navigate = useNavigate();
-    const [status, setStatus] = useState(null); // null | {status, pages_indexed}
+    const [chapters, setChapters] = useState(null);
+    const [index, setIndex] = useState(null); // {status, pages_indexed, total_pages, error_msg}
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
     const bottomRef = useRef(null);
+    const indexRequested = useRef(false);
 
-    const fetchStatus = useCallback(async () => {
+    useEffect(() => {
+        api.get(`/ai/estudio/${livroId}/chapters`)
+            .then((r) => setChapters(r.data.chapters || []))
+            .catch(() => setChapters([]));
+    }, [livroId]);
+
+    const fetchIndex = useCallback(async () => {
         try {
             const { data } = await api.get(`/ai/chat/${livroId}/status`);
-            setStatus(data);
-            return data.status;
+            setIndex(data);
+            return data;
         } catch {
-            return 'error';
+            return null;
         }
     }, [livroId]);
 
+    // On-demand indexing for semantic search: start it once, then poll while it runs
     useEffect(() => {
-        fetchStatus();
-    }, [fetchStatus]);
+        fetchIndex().then((data) => {
+            if (data?.status === 'not_indexed' && !indexRequested.current) {
+                indexRequested.current = true;
+                api.post(`/ai/chat/${livroId}/index`, {}).then(fetchIndex).catch(() => {});
+            }
+        });
+    }, [livroId, fetchIndex]);
 
-    // Poll while indexing
     useEffect(() => {
-        if (status?.status !== 'indexing') return;
-        const interval = setInterval(async () => {
-            const s = await fetchStatus();
-            if (s !== 'indexing') clearInterval(interval);
-        }, 3000);
-        return () => clearInterval(interval);
-    }, [status?.status, fetchStatus]);
+        if (index?.status !== 'indexing') return;
+        const timer = setInterval(fetchIndex, 4000);
+        return () => clearInterval(timer);
+    }, [index?.status, fetchIndex]);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
+    const page = pageNumber || 1;
+    const chapter = chapters ? chapterFor(chapters, page) : null;
+    const range = chapter
+        ? { start: chapter.page_start, end: chapter.page_end }
+        : { start: Math.max(1, page - NEIGHBOR_PAGES), end: page + NEIGHBOR_PAGES };
+    const contextLabel = chapter ? `${chapter.title} (p. ${range.start}–${range.end})` : `p. ${range.start}–${range.end}`;
+
     const sendMessage = async () => {
         if (!input.trim() || loading) return;
         const userMsg = { role: 'user', content: input.trim() };
-        const history = messages.map(m => ({ role: m.role, content: m.content }));
-
-        setMessages(prev => [...prev, userMsg, { role: 'assistant', content: '', loading: true }]);
+        const history = messages.map((m) => ({ role: m.role, content: m.content }));
+        setMessages((prev) => [...prev, userMsg, { role: 'assistant', content: '', loading: true }]);
         setInput('');
         setLoading(true);
 
         try {
-            const response = await fetch(
-                `${api.defaults.baseURL}/ai/chat/${livroId}`,
-                {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: `Bearer ${localStorage.getItem('token')}`,
-                    },
-                    body: JSON.stringify({ message: userMsg.content, history }),
-                }
-            );
+            const response = await fetch(`${api.defaults.baseURL}/ai/estudio/${livroId}/chat`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${localStorage.getItem('token')}`,
+                },
+                body: JSON.stringify({ message: userMsg.content, history, page_ranges: [range], rag_scope: 'book' }),
+            });
+            if (!response.ok) {
+                let detail = `Erro ${response.status}`;
+                try { detail = (await response.json()).detail || detail; } catch {}
+                throw new Error(detail);
+            }
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let assistantText = '';
             let buffer = '';
-
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
@@ -85,31 +113,21 @@ const ChatSubTab = ({ livroId }) => {
                     if (data === '[DONE]') break;
                     try {
                         const parsed = JSON.parse(data);
-                        if (parsed.error) {
-                            assistantText = parsed.error;
-                        } else if (parsed.token) {
-                            assistantText += parsed.token;
-                        }
-                        setMessages(prev => {
+                        if (parsed.error) assistantText = parsed.error;
+                        else if (parsed.token) assistantText += parsed.token;
+                        const status = parsed.status && !assistantText ? parsed.status : null;
+                        setMessages((prev) => {
                             const updated = [...prev];
-                            updated[updated.length - 1] = {
-                                role: 'assistant',
-                                content: assistantText,
-                                loading: false,
-                            };
+                            updated[updated.length - 1] = { role: 'assistant', content: assistantText, loading: !!status, status };
                             return updated;
                         });
                     } catch {}
                 }
             }
         } catch (e) {
-            setMessages(prev => {
+            setMessages((prev) => {
                 const updated = [...prev];
-                updated[updated.length - 1] = {
-                    role: 'assistant',
-                    content: `Erro: ${e.message}`,
-                    loading: false,
-                };
+                updated[updated.length - 1] = { role: 'assistant', content: `Erro: ${e.message}`, loading: false };
                 return updated;
             });
         } finally {
@@ -117,86 +135,30 @@ const ChatSubTab = ({ livroId }) => {
         }
     };
 
-    if (!status) {
-        return (
-            <div className="flex items-center justify-center h-40">
-                <Loader2 className="animate-spin text-blue-500" size={24} />
-            </div>
-        );
-    }
+    const indexPct = index?.status === 'indexing' && index.total_pages > 0
+        ? Math.round((index.pages_indexed / index.total_pages) * 100)
+        : null;
 
-    if (status.status === 'not_indexed' || status.status === 'error') {
-        return (
-            <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-4">
-                <GraduationCap size={40} className="text-purple-300" />
-                <p className="text-sm text-gray-700 font-semibold">
-                    {status.status === 'error' ? 'Erro na indexação anterior.' : 'Este livro não está indexado.'}
-                </p>
-                {status.status === 'error' && status.error_msg && (
-                    <div className="w-full bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-left">
-                        <p className="text-xs font-semibold text-red-600 mb-1 flex items-center gap-1">
-                            <AlertCircle size={12} /> Detalhe do erro:
-                        </p>
-                        <p className="text-xs text-red-700 font-mono break-all">{status.error_msg}</p>
-                    </div>
-                )}
-                <p className="text-xs text-gray-400 max-w-[200px]">
-                    Abra o Estúdio, selecione os capítulos e indexe — o chat ficará disponível aqui.
-                </p>
-                <button
-                    onClick={() => navigate(`/estudio/${livroId}`)}
-                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-xl text-sm font-semibold hover:bg-purple-700 transition"
-                >
-                    <GraduationCap size={16} />
-                    Abrir Estúdio
-                    <ExternalLink size={13} />
-                </button>
-            </div>
-        );
-    }
-
-    if (status.status === 'indexing') {
-        const pct = status.total_pages > 0
-            ? Math.round((status.pages_indexed / status.total_pages) * 100)
-            : null;
-        return (
-            <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-4">
-                <Loader2 size={40} className="text-blue-500 animate-spin" />
-                <p className="text-sm text-gray-700 font-semibold">Indexando livro…</p>
-                {pct !== null ? (
-                    <div className="w-full max-w-xs">
-                        <div className="flex justify-between text-xs text-gray-500 mb-1">
-                            <span>{status.pages_indexed} / {status.total_pages} páginas</span>
-                            <span className="font-semibold">{pct}%</span>
-                        </div>
-                        <div className="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
-                            <div
-                                className="bg-blue-500 h-2.5 rounded-full transition-all duration-700"
-                                style={{ width: `${pct}%` }}
-                            />
-                        </div>
-                    </div>
-                ) : (
-                    <p className="text-xs text-gray-400">
-                        {status.pages_indexed > 0 ? `${status.pages_indexed} páginas processadas` : 'Iniciando…'}
-                    </p>
-                )}
-                <p className="text-xs text-gray-400">Esta aba atualizará automaticamente.</p>
-            </div>
-        );
-    }
-
-    // status === 'ready'
     return (
         <div className="flex flex-col h-full">
-            <div className="flex items-center justify-between mb-2 px-1">
-                <div className="text-xs text-green-600 flex items-center gap-1">
-                    <CheckCircle size={12} />
-                    <span>{status.pages_indexed} páginas indexadas</span>
+            <div className="flex items-start justify-between gap-2 mb-2 px-1">
+                <div className="min-w-0 text-xs text-gray-500 space-y-0.5">
+                    <p className="truncate" title={contextLabel}>
+                        <span className="font-semibold text-gray-700">Contexto:</span> {chapters ? contextLabel : 'carregando…'}
+                    </p>
+                    <p className="flex items-center gap-1">
+                        {index?.status === 'ready' && <><CheckCircle size={11} className="text-green-600" /> Busca no livro todo pronta</>}
+                        {index?.status === 'indexing' && <><Loader2 size={11} className="animate-spin" /> Preparando busca no livro todo{indexPct !== null ? ` (${indexPct}%)` : '…'}</>}
+                        {index?.status === 'error' && (
+                            <span title={index.error_msg || ''} className="flex items-center gap-1 text-amber-700">
+                                <AlertCircle size={11} /> Busca por significado indisponível; usando busca por palavras
+                            </span>
+                        )}
+                    </p>
                 </div>
                 <button
                     onClick={() => navigate(`/estudio/${livroId}`)}
-                    className="flex items-center gap-1 text-xs text-purple-600 hover:text-purple-800 hover:bg-purple-50 px-2 py-1 rounded-lg transition font-semibold"
+                    className="flex-shrink-0 flex items-center gap-1 text-xs text-purple-600 hover:text-purple-800 hover:bg-purple-50 px-2 py-1 rounded-lg transition font-semibold"
                     title="Abrir Estúdio de Estudos"
                 >
                     <GraduationCap size={13} />
@@ -208,9 +170,9 @@ const ChatSubTab = ({ livroId }) => {
             {/* Messages */}
             <div className="flex-1 overflow-y-auto space-y-3 mb-3 custom-scrollbar">
                 {messages.length === 0 && (
-                    <div className="text-center text-gray-400 text-xs mt-8">
+                    <div className="text-center text-gray-400 text-xs mt-8 px-4">
                         <Bot size={28} className="mx-auto mb-2 opacity-30" />
-                        <p>Faça uma pergunta sobre o livro.</p>
+                        <p>Pergunte sobre o capítulo que você está lendo — ou sobre o livro todo.</p>
                     </div>
                 )}
                 {messages.map((msg, i) => (
@@ -231,6 +193,7 @@ const ChatSubTab = ({ livroId }) => {
                                         <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                                         <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
                                         <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                        {msg.status && <span className="ml-2 text-xs text-gray-500">{msg.status}</span>}
                                     </span>
                                 ) : (
                                     <ChatMarkdown content={msg.content} />
@@ -246,8 +209,8 @@ const ChatSubTab = ({ livroId }) => {
             <div className="flex gap-2">
                 <textarea
                     value={input}
-                    onChange={e => setInput(e.target.value)}
-                    onKeyDown={e => {
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                             e.preventDefault();
                             sendMessage();
@@ -259,7 +222,8 @@ const ChatSubTab = ({ livroId }) => {
                 />
                 <button
                     onClick={sendMessage}
-                    disabled={!input.trim() || loading}
+                    disabled={!input.trim() || loading || !chapters}
+                    aria-label="Enviar pergunta"
                     className="p-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-40 transition self-end"
                 >
                     <Send size={16} />
@@ -665,7 +629,7 @@ const AITab = ({ livroId, pageNumber, pageText }) => {
 
             {/* Content */}
             <div className="flex-1 min-h-0 overflow-y-auto">
-                {subTab === 'chat' && <ChatSubTab livroId={livroId} />}
+                {subTab === 'chat' && <ChatSubTab livroId={livroId} pageNumber={pageNumber} />}
                 {subTab === 'resumo' && <ResumoSubTab livroId={livroId} />}
                 {subTab === 'voz' && (
                     <VozSubTab pageText={pageText} pageNumber={pageNumber} />
