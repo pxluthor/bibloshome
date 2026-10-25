@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import { toast } from '../../utils/toast';
 import ChatMarkdown from '../ChatMarkdown';
+import ArtifactActionCard from '../ArtifactActionCard';
 
 // ─── SUB-ABA: CHAT ────────────────────────────────────────────────────────────
 // Answers from the saved summary of the chapter being read (+ word search); when that is not
@@ -101,6 +102,7 @@ const ChatSubTab = ({ livroId, pageNumber }) => {
             const decoder = new TextDecoder();
             let assistantText = '';
             let buffer = '';
+            let action = null; // agent asked to generate an artifact (needs confirmation)
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
@@ -115,10 +117,11 @@ const ChatSubTab = ({ livroId, pageNumber }) => {
                         const parsed = JSON.parse(data);
                         if (parsed.error) assistantText = parsed.error;
                         else if (parsed.token) assistantText += parsed.token;
+                        if (parsed.action?.type === 'gerar_artefato') action = { tipo: parsed.action.tipo, state: 'pending' };
                         const status = parsed.status && !assistantText ? parsed.status : null;
                         setMessages((prev) => {
                             const updated = [...prev];
-                            updated[updated.length - 1] = { role: 'assistant', content: assistantText, loading: !!status, status };
+                            updated[updated.length - 1] = { role: 'assistant', content: assistantText, loading: !!status, status, action };
                             return updated;
                         });
                     } catch {}
@@ -132,6 +135,26 @@ const ChatSubTab = ({ livroId, pageNumber }) => {
             });
         } finally {
             setLoading(false);
+        }
+    };
+
+    const setActionState = (index, state) =>
+        setMessages((prev) => prev.map((m, i) => (i === index && m.action ? { ...m, action: { ...m.action, state } } : m)));
+
+    // Generates in the background with the same chapter range the chat used; it is saved for the Estúdio
+    const generateFromChat = async (index, tipo) => {
+        setActionState(index, 'running');
+        try {
+            const response = await fetch(`${api.defaults.baseURL}/ai/estudio/${livroId}/artifact`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+                body: JSON.stringify({ tipo, page_ranges: [range] }),
+            });
+            const text = await response.text(); // JSON, or the SSE stream of audio_resumo read to the end
+            if (!response.ok || /"error"\s*:/.test(text)) throw new Error(text.slice(0, 200));
+            setActionState(index, 'done');
+        } catch {
+            setActionState(index, 'error');
         }
     };
 
@@ -196,7 +219,18 @@ const ChatSubTab = ({ livroId, pageNumber }) => {
                                         {msg.status && <span className="ml-2 text-xs text-gray-500">{msg.status}</span>}
                                     </span>
                                 ) : (
+                                    <>
                                     <ChatMarkdown content={msg.content} />
+                                    {msg.action && (
+                                        <ArtifactActionCard
+                                            tipo={msg.action.tipo}
+                                            state={msg.action.state}
+                                            onCancel={() => setActionState(i, 'cancelled')}
+                                            onConfirm={() => generateFromChat(i, msg.action.tipo)}
+                                            onOpen={() => navigate(`/estudio/${livroId}`)}
+                                        />
+                                    )}
+                                    </>
                                 )}
                             </div>
                         </div>

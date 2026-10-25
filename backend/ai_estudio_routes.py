@@ -28,7 +28,7 @@ from ai.rag import open_document, query_book
 from ai_routes import SSE_HEADERS, SYSTEM_CHAT, VOICE_MAP, _corrigir_pronuncia, _get_user_settings, build_provider
 from auth import get_current_user
 from database import get_session, engine
-from models import utcnow, EstudioArtefato, Livro, Usuario
+from models import utcnow, Anotacao, EstudioArtefato, Livro, Usuario
 from services import PDFService, get_pdf_service
 
 logger = logging.getLogger(__name__)
@@ -758,6 +758,9 @@ BUSCA_MAX_PAGES = 6
 BUSCA_PAGE_CHARS = 2000
 BUSCA_PREFIX = "BUSCAR:"
 COMPLEMENT_PREFIX = "COMPLEMENTAR:"
+TOOL_PREFIX = "FERRAMENTA:"
+MAX_TOOL_STEPS = 4
+TOOL_MAX_PAGES = 6
 RESUMO_EXTRA_PAGES = 3
 RESUMO_EXTRA_PAGE_CHARS = 1500
 
@@ -784,6 +787,14 @@ SYSTEM_CHAT_RESUMO = (
     "\nSe conseguiu responder mas sente que a resposta ficou incompleta (faltou exemplo, definicao exata, "
     f"codigo ou detalhe), termine com uma ultima linha '{COMPLEMENT_PREFIX} termo1; termo2' para que o "
     "texto completo seja consultado."
+    "\n\nFERRAMENTAS: em vez de responder, voce pode pedir UMA ferramenta respondendo APENAS com uma linha "
+    f"'{TOOL_PREFIX} nome | argumentos':"
+    "\n- ler_paginas | 120-123  (texto literal dessas paginas; ate 6 paginas)"
+    "\n- minhas_anotacoes |  (destaques, notas e marcadores do usuario neste livro)"
+    "\n- buscar_no_acervo | tema  (outros livros da biblioteca sobre o tema)"
+    "\n- gerar_artefato | tipo  (so quando o usuario PEDIR para criar material; tipos: "
+    + ", ".join(sorted(VALID_TIPOS)) + "). O usuario confirma antes de gerar."
+    "\nDepois do resultado da ferramenta voce responde normalmente ou pede outra."
 )
 
 
@@ -907,6 +918,46 @@ def _search_pages(pages: list[tuple[int, str]], terms: list[str]) -> list[tuple[
     return sorted(((n, t) for _, n, t in best), key=lambda p: p[0])
 
 
+def _parse_tool(line: str) -> tuple[str, str]:
+    """'FERRAMENTA: ler_paginas | 10-12' -> ('ler_paginas', '10-12')."""
+    name, _, args = line.split(":", 1)[1].partition("|")
+    return name.strip().lower(), args.strip()
+
+
+def _tool_ler_paginas(livro: Livro, args: str, pdf_service: PDFService) -> str:
+    match = re.match(r"\s*(\d+)\s*(?:-\s*(\d+))?", args)
+    if not match:
+        return "Formato inválido; use por exemplo 120-123."
+    start = int(match.group(1))
+    end = min(int(match.group(2) or start), start + TOOL_MAX_PAGES - 1)
+    pages = _read_pages(livro, [{"start": start, "end": end}], pdf_service)
+    return "\n\n".join(f"[Página {n}]\n{t[:BUSCA_PAGE_CHARS]}" for n, t in pages) or "Sem texto nessas páginas."
+
+
+def _tool_minhas_anotacoes(usuario_id: int, livro_id: int) -> str:
+    with Session(engine) as s:
+        row = s.exec(select(Anotacao).where(Anotacao.usuario_id == usuario_id, Anotacao.livro_id == livro_id)).first()
+    dados = (row.dados_json if row else None) or {}
+    lines = [f"Marcadores (páginas): {', '.join(map(str, dados['bookmarks']))}"] if dados.get("bookmarks") else []
+    for page, note in sorted((dados.get("notes") or {}).items(), key=lambda kv: int(kv[0]) if str(kv[0]).isdigit() else 0):
+        if note:
+            lines.append(f"Nota na p. {page}: {str(note)[:400]}")
+    for page, marks in (dados.get("highlights") or {}).items():
+        for mark in (marks if isinstance(marks, list) else [marks])[:5]:
+            text = mark.get("text") if isinstance(mark, dict) else mark
+            if text:
+                lines.append(f"Destaque na p. {page}: {str(text)[:300]}")
+    return "\n".join(lines[:40]) or "O usuário não tem anotações neste livro."
+
+
+def _tool_buscar_no_acervo(tema: str, usuario: Usuario) -> str:
+    import routes  # late import: routes is a sibling router module
+    with Session(engine) as s:
+        result = routes.list_documents(page=1, limit=8, search=tema, genre="", tag="", area="", current_user=usuario, session=s)
+    livros = [f"- {l.titulo} ({l.autor or 'autor desconhecido'}) [id {l.id}]" for l in result["items"]]
+    return (f"{result['total']} livros encontrados para '{tema}':\n" + "\n".join(livros)) if livros else f"Nenhum livro sobre '{tema}'."
+
+
 @router.post("/estudio/{livro_id}/chat")
 async def estudio_chat(
     livro_id: int,
@@ -923,6 +974,7 @@ async def estudio_chat(
     provider = build_provider(settings, current_user.id, session)
     escopo = _escopo(body.page_ranges)
     usuario_id = current_user.id
+    usuario = current_user
     pages = _read_pages(livro, body.page_ranges, pdf_service)
     if not pages:
         raise HTTPException(status_code=422, detail="Não foi possível ler texto dessas páginas")
@@ -957,6 +1009,7 @@ async def estudio_chat(
                     with Session(engine) as s:
                         _persist_artifact(s, usuario_id, livro_id, CONTEXTO_TIPO, escopo, resumo)
 
+            terms: list[str] = []
             if resumo:
                 # Small models rarely ask for a lookup on their own, so ship the pages that best match
                 # the question's words alongside the summary; BUSCAR still covers wording mismatches.
@@ -967,54 +1020,91 @@ async def estudio_chat(
                 content = f"Resumo dos capítulos:\n{resumo}"
                 if extras:
                     content += f"\n\nTrechos possivelmente relevantes:{extras}"
-                stream = provider.chat(
-                    messages=history + [{"role": "user", "content": f"{content}\n\nPergunta: {body.message}"}],
-                    model=settings.chat_model, system=SYSTEM_CHAT_RESUMO, stream=True,
-                )
+
                 def needs_lookup(head: str) -> bool:
                     folded = _fold(head).lstrip("*_# ")
-                    return head.upper().startswith(BUSCA_PREFIX) or folded.startswith(_NOT_FOUND_PREFIXES)
+                    return (head.upper().startswith((BUSCA_PREFIX, TOOL_PREFIX))
+                            or folded.startswith(_NOT_FOUND_PREFIXES))
 
-                # Hold back the first ~40 chars: enough to spot a lookup request or a "not found" refusal.
-                buffer, decided, wants_search = "", False, False
-                answer = _MarkerFilter()
+                tool_results: list[str] = []
+                for step in range(MAX_TOOL_STEPS + 1):
+                    tools_text = "".join(f"\n\n{r}" for r in tool_results)
+                    if step == MAX_TOOL_STEPS:
+                        tools_text += "\n\n(Limite de ferramentas atingido: responda agora com o que tem.)"
+                    stream = provider.chat(
+                        messages=history + [{"role": "user", "content": f"{content}{tools_text}\n\nPergunta: {body.message}"}],
+                        model=settings.chat_model, system=SYSTEM_CHAT_RESUMO, stream=True,
+                    )
+                    # Hold back the first ~40 chars: enough to spot a tool/lookup request or a refusal.
+                    buffer, decided, wants_search = "", False, False
+                    answer = _MarkerFilter()
 
-                def emit(text: str):
-                    shown = answer.feed(text)
-                    return event({"token": shown}) if shown else None
+                    def emit(text: str):
+                        shown = answer.feed(text)
+                        return event({"token": shown}) if shown else None
 
-                async for token in stream:
-                    if decided and not wants_search:
-                        if (ev := emit(token)):
-                            yield ev
-                        continue
-                    buffer += token
-                    if not decided and len(buffer.lstrip()) >= 40:
-                        decided, wants_search = True, needs_lookup(buffer.lstrip())
+                    async for token in stream:
+                        if decided and not wants_search:
+                            if (ev := emit(token)):
+                                yield ev
+                            continue
+                        buffer += token
+                        if not decided and len(buffer.lstrip()) >= 40:
+                            decided, wants_search = True, needs_lookup(buffer.lstrip())
+                            if not wants_search and (ev := emit(buffer)):
+                                yield ev
+                    if not decided:
+                        # Short answer, or an empty completion (which falls through to the page lookup).
+                        wants_search = not buffer.strip() or needs_lookup(buffer.lstrip())
                         if not wants_search and (ev := emit(buffer)):
                             yield ev
-                if not decided:
-                    # Short answer, or an empty completion (which falls through to the page lookup).
-                    wants_search = not buffer.strip() or needs_lookup(buffer.lstrip())
-                    if not wants_search and (ev := emit(buffer)):
-                        yield ev
-                if not wants_search:
-                    if (rest := answer.finish()):
-                        yield event({"token": rest})
-                    if not answer.marker:
-                        return
-                    # Answered, but the model flagged it as incomplete: look it up and append a complement
-                    previous = answer.text.strip()
-                    terms = [t.strip() for t in answer.marker.split(":", 1)[1].split(";") if t.strip()][:4] \
-                        or _question_terms(body.message)
-                else:
-                    head = buffer.strip()
-                    terms = (
-                        [t.strip() for t in head[len(BUSCA_PREFIX):].split(";") if t.strip()][:4]
-                        if head.upper().startswith(BUSCA_PREFIX) else []
-                    ) or _question_terms(body.message)
-            else:
-                terms = []
+
+                    head = buffer.strip().split("\n", 1)[0].strip()
+                    if wants_search and head.upper().startswith(TOOL_PREFIX) and step < MAX_TOOL_STEPS:
+                        name, args = _parse_tool(head)
+                        if name == "gerar_artefato":
+                            tipo = args.lower().strip()
+                            if tipo in VALID_TIPOS:
+                                # Never generate on our own: the frontend asks the user to confirm
+                                yield event({"action": {"type": "gerar_artefato", "tipo": tipo}})
+                                yield event({"token": f"Posso gerar **{tipo.replace('_', ' ')}** a partir destes capítulos. Confirme abaixo para começar."})
+                                return
+                            tool_results.append(f"[Ferramenta gerar_artefato] Tipo inválido '{tipo}'. Válidos: {', '.join(sorted(VALID_TIPOS))}.")
+                            continue
+                        if name == "buscar_no_livro":
+                            terms = [t.strip() for t in re.split(r"[;,]", args) if t.strip()][:4]
+                            break
+                        yield event({"status": f"Usando a ferramenta {name.replace('_', ' ')}…"})
+                        try:
+                            if name == "ler_paginas":
+                                result = await asyncio.to_thread(_tool_ler_paginas, livro, args, pdf_service)
+                            elif name == "minhas_anotacoes":
+                                result = await asyncio.to_thread(_tool_minhas_anotacoes, usuario_id, livro_id)
+                            elif name == "buscar_no_acervo":
+                                result = await asyncio.to_thread(_tool_buscar_no_acervo, args or body.message, usuario)
+                            else:
+                                result = f"Ferramenta desconhecida: {name}."
+                        except Exception as exc:  # a failing tool becomes information, not a crash
+                            result = f"Falha na ferramenta: {exc}"
+                        tool_results.append(f"[Resultado da ferramenta {name} | {args}]\n{result}")
+                        continue
+
+                    if not wants_search:
+                        if (rest := answer.finish()):
+                            yield event({"token": rest})
+                        if not answer.marker:
+                            return
+                        # Answered, but the model flagged it as incomplete: look it up and append a complement
+                        previous = answer.text.strip()
+                        terms = [t.strip() for t in answer.marker.split(":", 1)[1].split(";") if t.strip()][:4] \
+                            or _question_terms(body.message)
+                    else:
+                        terms = (
+                            [t.strip() for t in head[len(BUSCA_PREFIX):].split(";") if t.strip()][:4]
+                            if head.upper().startswith(BUSCA_PREFIX) else []
+                        ) or _question_terms(body.message)
+                    break
+                terms = terms or _question_terms(body.message)
 
             # Escalation: exact words in the pages + semantic search (RAG) when the book is indexed
             search_pages = pages

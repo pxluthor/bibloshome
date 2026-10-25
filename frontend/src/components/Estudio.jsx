@@ -13,6 +13,7 @@ import api from '../services/api';
 import { toast } from '../utils/toast';
 import ChatMarkdown from './ChatMarkdown';
 import { confirmDialog } from './ConfirmDialog';
+import ArtifactActionCard from './ArtifactActionCard';
 
 // Isola falhas de render de um artefato (ex.: JSON fora do formato) para não derrubar a página.
 class ArtifactBoundary extends React.Component {
@@ -911,6 +912,7 @@ const Estudio = () => {
         setChatLoading(true);
         const chatEscopo = escopo;
         let finalText = '';
+        let action = null; // agent asked to generate an artifact (needs confirmation)
 
         try {
             const response = await fetch(
@@ -951,10 +953,11 @@ const Estudio = () => {
                         const parsed = JSON.parse(data);
                         if (parsed.error)       assistantText = parsed.error;
                         else if (parsed.token)  assistantText += parsed.token;
+                        if (parsed.action?.type === 'gerar_artefato') action = { tipo: parsed.action.tipo, state: 'pending' };
                         const status = parsed.status && !assistantText ? parsed.status : null;
                         setMessages((prev) => {
                             const updated = [...prev];
-                            updated[updated.length - 1] = { role: 'assistant', content: assistantText, loading: !!status, status };
+                            updated[updated.length - 1] = { role: 'assistant', content: assistantText, loading: !!status, status, action };
                             return updated;
                         });
                     } catch {}
@@ -974,6 +977,9 @@ const Estudio = () => {
             persistChat([...history, userMsg, { role: 'assistant', content: finalText }], chatEscopo);
         }
     };
+
+    const setActionState = (index, state) =>
+        setMessages((prev) => prev.map((m, i) => (i === index && m.action ? { ...m, action: { ...m.action, state } } : m)));
 
     // ─── Generate artifact ────────────────────────────────────────────────────
     const generateArtifact = async (tipo) => {
@@ -1313,7 +1319,22 @@ const Estudio = () => {
                                                                 {msg.status && <span className="ml-2 text-xs text-gray-500">{msg.status}</span>}
                                                             </span>
                                                         ) : (
+                                                            <>
                                                             <ChatMarkdown content={msg.content} />
+                                                            {msg.action && (
+                                                                <ArtifactActionCard
+                                                                    tipo={msg.action.tipo}
+                                                                    state={msg.action.state}
+                                                                    onCancel={() => setActionState(i, 'cancelled')}
+                                                                    onConfirm={async () => {
+                                                                        setActionState(i, 'running');
+                                                                        await generateArtifact(msg.action.tipo);
+                                                                        setActionState(i, 'done');
+                                                                    }}
+                                                                    onOpen={() => setTab('artifacts')}
+                                                                />
+                                                            )}
+                                                            </>
                                                         )}
                                                     </div>
                                                 </div>
