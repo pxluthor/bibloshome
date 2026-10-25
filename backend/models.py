@@ -2,7 +2,7 @@
 from typing import Optional, Dict, Any, List
 from sqlmodel import Field, SQLModel
 from datetime import datetime, timezone
-from sqlalchemy import Column, JSON, UniqueConstraint, LargeBinary
+from sqlalchemy import Column, JSON, UniqueConstraint, LargeBinary, Text
 
 
 def utcnow() -> datetime:
@@ -216,6 +216,22 @@ class EstudioArtefato(SQLModel, table=True):
     tipo: str  # quiz | flashcards | mindmap | audio_resumo | resumo | insights | reflexao | sumario | videos | podcast | video
     conteudo: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
     saved_at: datetime = Field(default_factory=utcnow)
+
+
+# --- FEEDBACK (bugs e melhorias reportados pelos usuários) ---
+class Feedback(SQLModel, table=True):
+    __tablename__ = "feedbacks"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    tipo: str = Field(default="bug", max_length=20)          # bug | melhoria
+    titulo: str = Field(max_length=200)
+    descricao: str = Field(sa_column=Column(Text))
+    pagina: Optional[str] = Field(default=None, max_length=300)  # tela de onde o usuário veio
+    status: str = Field(default="aberto", max_length=20)     # aberto | em_analise | resolvido | descartado
+    resposta: Optional[str] = Field(default=None, sa_column=Column(Text))
+    criado_em: datetime = Field(default_factory=utcnow, index=True)
+    atualizado_em: datetime = Field(default_factory=utcnow)
 
 
 class PedidoLivro(SQLModel, table=True):

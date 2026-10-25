@@ -10,13 +10,13 @@ import hashlib
 import re
 import unicodedata
 from datetime import timezone
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import String, and_, case, cast, or_, func as sa_func
 from sqlalchemy.orm import defer
 from typing import List, Optional
 from datetime import datetime
 from database import get_session
-from models import utcnow, LivroAcesso, Usuario, UsuarioCreate, UsuarioLogin, ListaLeitura, ListaLeituraUpdate, ColecaoLivro, ColecaoLivroItem, ColecaoLivroCreate, Livro, Anotacao, AnotacaoUpdate, LivroRead, LivroUpdate, PedidoLivro, PedidoLivroCreate, PedidoLivroUpdate
+from models import utcnow, Feedback, LivroAcesso, Usuario, UsuarioCreate, UsuarioLogin, ListaLeitura, ListaLeituraUpdate, ColecaoLivro, ColecaoLivroItem, ColecaoLivroCreate, Livro, Anotacao, AnotacaoUpdate, LivroRead, LivroUpdate, PedidoLivro, PedidoLivroCreate, PedidoLivroUpdate
 from services import get_pdf_service, get_translation_service, PDFService, TranslationService
 from auth import get_password_hash, verify_password, create_access_token, get_current_user, oauth2_scheme
 
@@ -924,6 +924,66 @@ def get_my_pedidos(
     return resultado
 
 # Listar todos os pedidos (apenas admin)
+FEEDBACK_TIPOS = {"bug", "melhoria"}
+FEEDBACK_STATUS = {"aberto", "em_analise", "resolvido", "descartado"}
+
+
+class FeedbackCreate(BaseModel):
+    tipo: str = Field(pattern="^(bug|melhoria)$")
+    titulo: str = Field(min_length=3, max_length=200)
+    descricao: str = Field(min_length=5, max_length=5000)
+    pagina: Optional[str] = Field(default=None, max_length=300)
+
+
+class FeedbackUpdate(BaseModel):
+    status: str = Field(pattern="^(aberto|em_analise|resolvido|descartado)$")
+    resposta: Optional[str] = Field(default=None, max_length=5000)
+
+
+def _feedback_out(fb: Feedback, autor: Optional[Usuario] = None) -> dict:
+    data = fb.model_dump()
+    if autor:
+        data.update(autor_nome=autor.nome, autor_email=autor.email)
+    return data
+
+
+@router.post("/feedback", status_code=201)
+@limiter.limit("10/minute")
+def criar_feedback(request: Request, body: FeedbackCreate, current_user: Usuario = Depends(get_current_user),
+                   session: Session = Depends(get_session)):
+    fb = Feedback(usuario_id=current_user.id, **body.model_dump())
+    session.add(fb)
+    session.commit()
+    session.refresh(fb)
+    return _feedback_out(fb)
+
+
+@router.get("/feedback")
+def listar_feedback(current_user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)):
+    """Usuário vê os próprios envios; admin vê todos, com o autor."""
+    stmt = select(Feedback, Usuario).join(Usuario, Feedback.usuario_id == Usuario.id).order_by(Feedback.criado_em.desc())
+    if not current_user.is_admin:
+        stmt = stmt.where(Feedback.usuario_id == current_user.id)
+    return [_feedback_out(fb, autor if current_user.is_admin else None) for fb, autor in session.exec(stmt).all()]
+
+
+@router.patch("/feedback/{feedback_id}")
+def atualizar_feedback(feedback_id: int, body: FeedbackUpdate, current_user: Usuario = Depends(get_current_user),
+                       session: Session = Depends(get_session)):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Acesso negado. Apenas administradores.")
+    fb = session.get(Feedback, feedback_id)
+    if not fb:
+        raise HTTPException(status_code=404, detail="Feedback não encontrado")
+    fb.status = body.status
+    fb.resposta = (body.resposta or "").strip() or None
+    fb.atualizado_em = utcnow()
+    session.add(fb)
+    session.commit()
+    session.refresh(fb)
+    return _feedback_out(fb)
+
+
 @router.get("/pedidos")
 def get_all_pedidos(
     current_user: Usuario = Depends(get_current_user),

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
     Library, PanelLeft, Clock, Bookmark, FolderPlus, BarChart2, ShoppingBag,
-    ClipboardList, Database, Settings, LogOut, Moon, Sun,
+    ClipboardList, Database, Settings, LogOut, Moon, Sun, MessageSquarePlus,
 } from 'lucide-react';
 import { useTheme } from '../utils/useTheme';
 
@@ -40,6 +40,7 @@ export default function AppSidebar({ userName, isAdmin, pedidosPendentes = 0, ad
             { path: '/admin/pedidos', label: 'Gerenciar Pedidos', icon: ClipboardList, badge: adminPendentes, alert: true },
             { path: '/admin/bd', label: 'Admin BD', icon: Database },
         ] : []),
+        { path: '/feedback', label: 'Feedback', icon: MessageSquarePlus },
         { path: '/configuracoes', label: 'Configurações', icon: Settings },
     ];
     const activeIndex = items.findIndex((item) => pathname.startsWith(item.path));
@@ -121,7 +122,7 @@ export default function AppSidebar({ userName, isAdmin, pedidosPendentes = 0, ad
                             <li key={item.path} className="relative">
                                 <button
                                     type="button"
-                                    onClick={() => navigate(item.path)}
+                                    onClick={() => navigate(item.path, { state: { from: pathname } })}
                                     aria-current={active ? 'page' : undefined}
                                     aria-label={collapsed ? item.label : undefined}
                                     onMouseEnter={(e) => showTip(e, item.label)}

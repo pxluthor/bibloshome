@@ -8,6 +8,7 @@ import DocumentList from './components/DocumentList';
 import PDFReader from './components/PDFReader';
 import Login from './components/Login';
 import ResetPassword from './components/ResetPassword';
+import FeedbackPage from './components/FeedbackPage';
 import CriarPedido from './components/CriarPedido';
 import MeusPedidos from './components/MeusPedidos';
 import AdminPedidos from './components/AdminPedidos';
@@ -129,6 +130,15 @@ function App() {
 
                 {/* Rotas Protegidas */}
                 <Route path="/" element={<Navigate to="/meus-livros" replace />} />
+
+                <Route
+                    path="/feedback"
+                    element={
+                        <PrivateRoute>
+                            <FeedbackPage />
+                        </PrivateRoute>
+                    }
+                />
 
                 <Route
                     path="/estatisticas"

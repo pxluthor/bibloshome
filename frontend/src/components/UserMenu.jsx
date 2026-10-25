@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { User, LogOut, ChevronDown, Bookmark, ShoppingBag, Settings, BookOpen, FileText, Database, BarChart2, Moon, Sun } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { User, LogOut, ChevronDown, Bookmark, ShoppingBag, Settings, BookOpen, FileText, Database, BarChart2, Moon, Sun, MessageSquarePlus } from 'lucide-react';
 import { useTheme } from '../utils/useTheme';
 
 const UserMenu = ({ userName, isAdmin, pedidosPendentes = 0, adminPendentes = 0 }) => {
@@ -8,6 +8,7 @@ const UserMenu = ({ userName, isAdmin, pedidosPendentes = 0, adminPendentes = 0 
     const [theme, setTheme] = useTheme();
     const menuRef = useRef(null);
     const navigate = useNavigate();
+    const { pathname } = useLocation();
 
     // Fechar menu quando clicar fora
     useEffect(() => {
@@ -115,6 +116,14 @@ const UserMenu = ({ userName, isAdmin, pedidosPendentes = 0, adminPendentes = 0 
                         >
                             <Settings size={18} className="text-gray-500" />
                             Configurações
+                        </button>
+
+                        <button
+                            onClick={() => { navigate('/feedback', { state: { from: pathname } }); setIsOpen(false); }}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition"
+                        >
+                            <MessageSquarePlus size={18} className="text-gray-500" />
+                            Feedback
                         </button>
 
                         <button
