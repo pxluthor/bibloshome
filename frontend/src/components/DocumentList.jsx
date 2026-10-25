@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useMemo, useRef } from 'react';
 import { cleanTitle } from '../utils/bookTitle';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
@@ -41,9 +41,21 @@ const getGradient = (id) => GRADIENTS[id % GRADIENTS.length];
 
 const ITEMS_PER_PAGE = 24;
 
+// Acervo state kept in memory while the app is open, so coming back from a book
+// restores the loaded pages, filters and scroll position without refetching.
+let acervoMemory = null;
+
 const DocumentList = () => {
+    const restoredRef = useRef(
+        window.location.pathname.startsWith('/acervo')
+        && acervoMemory?.user === localStorage.getItem('userName')
+            ? acervoMemory
+            : null
+    );
+    const restored = restoredRef.current;
+
     // --- DADOS ---
-    const [documents, setDocuments] = useState([]);
+    const [documents, setDocuments] = useState(restored?.documents ?? []);
     const [myListIds, setMyListIds] = useState(new Set());
     const [myListData, setMyListData] = useState({});
     const [myListBooks, setMyListBooks] = useState([]);
@@ -52,7 +64,7 @@ const DocumentList = () => {
     const [availableGenres, setAvailableGenres] = useState([]);
     const [availableTags, setAvailableTags] = useState([]);
     const [folders, setFolders] = useState([]);
-    const [totalItems, setTotalItems] = useState(0);
+    const [totalItems, setTotalItems] = useState(restored?.totalItems ?? 0);
 
     // --- FILTROS / NAVEGAÇÃO ---
     const location = useLocation();
@@ -66,20 +78,20 @@ const DocumentList = () => {
     // Client-side paginated tabs share the same filter/search/pagination
     const isClientList = viewMode === 'my_list' || viewMode === 'recent';
     const [selectedCollectionId, setSelectedCollectionId] = useState(null);
-    const [viewLayout, setViewLayout] = useState('grid');
-    const [searchTerm, setSearchTerm] = useState('');
-    const [selectedGenre, setSelectedGenre] = useState(null);
-    const [selectedTag, setSelectedTag] = useState(null);
-    const [selectedArea, setSelectedArea] = useState('');
+    const [viewLayout, setViewLayout] = useState(restored?.viewLayout ?? 'grid');
+    const [searchTerm, setSearchTerm] = useState(restored?.searchTerm ?? '');
+    const [selectedGenre, setSelectedGenre] = useState(restored?.selectedGenre ?? null);
+    const [selectedTag, setSelectedTag] = useState(restored?.selectedTag ?? null);
+    const [selectedArea, setSelectedArea] = useState(restored?.selectedArea ?? '');
     const [expandedFolders, setExpandedFolders] = useState({});
     const [filtersOpen, setFiltersOpen] = useState(false);
-    const [currentPage, setCurrentPage] = useState(1);
-    const [hasMore, setHasMore] = useState(false);
+    const [currentPage, setCurrentPage] = useState(restored?.currentPage ?? 1);
+    const [hasMore, setHasMore] = useState(restored?.hasMore ?? false);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const sentinelRef = useRef(null);
 
     // --- LOADING ---
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(!restored);
     const [listLoading, setListLoading] = useState(false);
     const [actionLoading, setActionLoading] = useState(null);
 
@@ -145,8 +157,37 @@ const DocumentList = () => {
         return () => clearTimeout(searchDebounceRef.current);
     }, [searchTerm]);
 
-    // Resetar página ao trocar aba
-    useEffect(() => { setCurrentPage(1); }, [viewMode]);
+    // Resetar página ao trocar aba (não no mount restaurado: as páginas carregadas continuam válidas)
+    const viewModeMounted = useRef(false);
+    useEffect(() => {
+        if (!viewModeMounted.current) {
+            viewModeMounted.current = true;
+            if (restoredRef.current) return;
+        }
+        setCurrentPage(1);
+    }, [viewMode]);
+
+    // Remember the acervo (pages, filters, scroll) when leaving the screen
+    const memoryRef = useRef(null);
+    memoryRef.current = viewMode === 'all' ? {
+        user: localStorage.getItem('userName'),
+        documents, totalItems, hasMore, currentPage,
+        searchTerm, selectedGenre, selectedTag, selectedArea, viewLayout,
+    } : null;
+    const scrollYRef = useRef(restored?.scrollY ?? 0);
+    useEffect(() => {
+        const onScroll = () => { if (viewMode === 'all') scrollYRef.current = window.scrollY; };
+        window.addEventListener('scroll', onScroll, { passive: true });
+        return () => window.removeEventListener('scroll', onScroll);
+    }, [viewMode]);
+    useEffect(() => () => {
+        if (memoryRef.current) acervoMemory = { ...memoryRef.current, scrollY: scrollYRef.current };
+    }, []);
+
+    // Back on a restored acervo: jump to where the user was
+    useLayoutEffect(() => {
+        if (restoredRef.current?.scrollY) window.scrollTo(0, restoredRef.current.scrollY);
+    }, []);
 
     // Recentes: recarrega sempre que a aba é aberta (o usuário acabou de sair de um livro)
     useEffect(() => {
@@ -187,9 +228,12 @@ const DocumentList = () => {
     const SNAPSHOT_KEY = `lib_home_snapshot_${userName}`;
 
     const applyInitial = (docsData, listItems) => {
-        setDocuments(Array.isArray(docsData?.items) ? docsData.items : []);
-        setTotalItems(docsData?.total ?? 0);
-        setHasMore(1 * ITEMS_PER_PAGE < (docsData?.total ?? 0));
+        // Restored acervo already has its pages; only refresh the reading list then
+        if (!restoredRef.current) {
+            setDocuments(Array.isArray(docsData?.items) ? docsData.items : []);
+            setTotalItems(docsData?.total ?? 0);
+            setHasMore(1 * ITEMS_PER_PAGE < (docsData?.total ?? 0));
+        }
 
         const ids = new Set(), listData = {}, listBooks = [];
         if (Array.isArray(listItems)) {
@@ -216,7 +260,7 @@ const DocumentList = () => {
             setLoading(false);
         }
         try {
-            if (!snapshot) setLoading(true);
+            if (!snapshot && !restoredRef.current) setLoading(true);
             const [docsRes, listRes] = await Promise.all([
                 api.get('/documents', { params: { page: 1, limit: ITEMS_PER_PAGE } }),
                 api.get('/my-list').catch(() => ({ data: [] })),
