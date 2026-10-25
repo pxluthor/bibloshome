@@ -186,17 +186,32 @@ def _strip_markdown_code_fences(text: str) -> str:
     return clean.strip()
 
 
+# Valid JSON escape (kept) or a lone backslash (doubled); scanning left to right keeps "\\" pairs intact.
+_JSON_ESCAPE_RE = re.compile(r'\\(["\\/bfnrt]|u[0-9a-fA-F]{4})|\\')
+
+
+def _fix_json_escapes(text: str) -> str:
+    """Escape lone backslashes, e.g. regex like \\d or \\1 written raw by the model."""
+    return _JSON_ESCAPE_RE.sub(lambda m: m.group(0) if m.group(1) else "\\\\", text)
+
+
 def _parse_json(text: str) -> Any:
-    """Parseia JSON tolerando texto extra antes/depois (comum em modelos como gpt-oss)."""
+    """Parseia JSON tolerando texto extra antes/depois (comum em modelos como gpt-oss)
+    e barras invertidas sem escape (livros de regex, código)."""
     clean = _strip_markdown_code_fences(text)
-    try:
-        return json.loads(clean)
-    except json.JSONDecodeError:
-        starts = [i for i in (clean.find("["), clean.find("{")) if i != -1]
-        if not starts:
-            raise
-        data, _ = json.JSONDecoder().raw_decode(clean[min(starts):])
-        return data
+    for candidate in (clean, _fix_json_escapes(clean)):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            starts = [i for i in (candidate.find("["), candidate.find("{")) if i != -1]
+            if not starts:
+                continue
+            try:
+                data, _ = json.JSONDecoder().raw_decode(candidate[min(starts):])
+                return data
+            except json.JSONDecodeError:
+                continue
+    raise json.JSONDecodeError("JSON inválido", clean, 0)
 
 
 def _extract_pages_text(
@@ -350,16 +365,19 @@ async def generate_artifact(
         )
 
     resposta = ""
-    try:
-        async for token in provider.chat(
-            messages=[{"role": "user", "content": user_content}],
-            model=settings.chat_model,
-            system=system,
-            stream=False,
-        ):
-            resposta += token
-    except ValueError as exc:
-        return {"tipo": body.tipo, "content": [], "error": str(exc)}
+    for _attempt in range(2):  # small models occasionally return an empty completion
+        try:
+            async for token in provider.chat(
+                messages=[{"role": "user", "content": user_content}],
+                model=settings.chat_model,
+                system=system,
+                stream=False,
+            ):
+                resposta += token
+        except ValueError as exc:
+            return {"tipo": body.tipo, "content": [], "error": str(exc)}
+        if resposta.strip():
+            break
 
     if body.tipo == "mindmap" or body.tipo in TEXT_PROMPTS:
         return {"tipo": body.tipo, "content": resposta.strip()}
