@@ -1,3 +1,4 @@
+import { rememberReturnPath } from '../utils/navigation';
 import axios from 'axios';
 
 // Configuração base da API
@@ -23,6 +24,7 @@ api.interceptors.response.use(
     (error) => {
         // Se receber 401 (Não Autorizado), limpa o acesso e expulsa o utilizador
         if (error.response && error.response.status === 401) {
+            rememberReturnPath();
             localStorage.clear();
             window.location.href = '/login'; // Redirecionamento forçado por segurança
         }

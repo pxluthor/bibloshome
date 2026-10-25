@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
+import { goBack } from '../utils/navigation';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, ArrowLeft, Database, Loader2, Search, ChevronRight, ChevronDown, Folder, FolderOpen, Flag, Trash2, Users, ShieldCheck, ShieldOff } from 'lucide-react';
 import api from '../services/api';
@@ -930,7 +931,7 @@ const AdminBd = () => {
                     </div>
                     <button
                         type="button"
-                        onClick={() => navigate('/')}
+                        onClick={() => goBack(navigate)}
                         className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
                     >
                         <ArrowLeft size={16} />

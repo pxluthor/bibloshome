@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { goBack } from '../utils/navigation';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Shield, Clock, CheckCircle, XCircle, Search, Filter, User, Mail, Calendar, FileText, Check, X } from 'lucide-react';
 import api from '../services/api';
@@ -123,7 +124,7 @@ const AdminPedidos = () => {
                 <div className="max-w-7xl mx-auto px-4 h-20 flex items-center justify-between">
                     <div className="flex items-center gap-4">
                         <button
-                            onClick={() => navigate('/')}
+                            onClick={() => goBack(navigate)}
                             className="flex items-center gap-2 text-white/80 hover:text-white transition"
                         >
                             <ArrowLeft size={20} />

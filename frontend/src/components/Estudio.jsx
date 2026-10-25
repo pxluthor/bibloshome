@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { goBack } from '../utils/navigation';
 import { cleanTitle } from '../utils/bookTitle';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
@@ -1003,7 +1004,7 @@ const Estudio = () => {
             {/* ── Header ── */}
             <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 flex-shrink-0">
                 <button
-                    onClick={() => navigate(-1)}
+                    onClick={() => goBack(navigate)}
                     className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 transition"
                 >
                     <ArrowLeft size={20} />

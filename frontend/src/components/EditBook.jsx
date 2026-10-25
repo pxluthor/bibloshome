@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { goBack } from '../utils/navigation';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Save, Loader2, ChevronDown, X, Sparkles, LockOpen } from 'lucide-react';
 import api from '../services/api';
@@ -185,7 +186,7 @@ const EditBook = () => {
 
             await api.put(`/documents/${id}/update`, updateData);
             toast.success('Livro atualizado com sucesso!');
-            navigate('/');
+            goBack(navigate);
         } catch (err) {
             setError(err.response?.data?.detail || 'Erro ao atualizar livro. Tente novamente.');
             console.error(err);
@@ -211,7 +212,7 @@ const EditBook = () => {
                 <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md text-center">
                     <p className="text-red-700">{error}</p>
                     <button 
-                        onClick={() => navigate('/')}
+                        onClick={() => goBack(navigate)}
                         className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
                     >
                         Voltar
@@ -227,7 +228,7 @@ const EditBook = () => {
                 {/* Header */}
                 <div className="mb-6 flex items-center gap-4">
                     <button
-                        onClick={() => navigate('/')}
+                        onClick={() => goBack(navigate)}
                         className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition"
                     >
                         <ArrowLeft size={20} />
@@ -558,7 +559,7 @@ const EditBook = () => {
                         <div className="flex gap-4 ml-auto">
                         <button
                             type="button"
-                            onClick={() => navigate('/')}
+                            onClick={() => goBack(navigate)}
                             className="px-6 py-3 border border-gray-300 rounded-lg text-gray-700 font-medium hover:bg-gray-50 transition"
                         >
                             Cancelar

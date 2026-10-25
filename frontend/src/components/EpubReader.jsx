@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { goBack } from '../utils/navigation';
 import { useParams, useNavigate } from 'react-router-dom';
 import ePub from 'epubjs';
 import {
@@ -229,7 +230,7 @@ export default function EpubReader() {
             {/* Header */}
             <header className="flex items-center gap-2 px-3 py-2 border-b bg-white/90 backdrop-blur z-20 flex-shrink-0">
                 <button
-                    onClick={() => navigate(-1)}
+                    onClick={() => goBack(navigate)}
                     className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-600 transition flex-shrink-0"
                 >
                     <ArrowLeft size={18} />

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { goBack } from '../utils/navigation';
 import { useNavigate } from 'react-router-dom';
 import { Library, BookOpen, BarChart2, CheckCircle, Clock, Bookmark, Image, ArrowLeft } from 'lucide-react';
 import api from '../services/api';
@@ -81,7 +82,7 @@ export default function Statistics() {
                 <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                         <button
-                            onClick={() => navigate('/')}
+                            onClick={() => goBack(navigate)}
                             className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 transition flex-shrink-0"
                         >
                             <ArrowLeft size={18} />

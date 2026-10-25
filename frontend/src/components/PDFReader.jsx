@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { goBack } from '../utils/navigation';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Document, Page, pdfjs } from 'react-pdf';
 import {
@@ -581,7 +582,7 @@ const PDFReader = () => {
             {/* HEADER COM Z-50 PARA FICAR ACIMA DO PAINEL */}
             <header className="fixed top-0 w-full h-14 bg-gray-800 border-b border-gray-700 flex items-center justify-between px-1 md:px-4 z-50">
                 <div className="flex items-center gap-1 md:gap-4">
-                    <button onClick={() => navigate('/')} className="p-2 hover:bg-gray-700 rounded-full transition"><ArrowLeft size={20} /></button>
+                    <button onClick={() => goBack(navigate)} aria-label="Voltar" className="p-2 hover:bg-gray-700 rounded-full transition"><ArrowLeft size={20} /></button>
                     <button onClick={toggleFullscreen} className="p-2 hover:bg-gray-700 rounded-full transition" title="Tela Cheia">
                         {isFullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
                     </button>

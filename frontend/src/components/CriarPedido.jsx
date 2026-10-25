@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { goBack } from '../utils/navigation';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, BookOpen, User, Building2, FileText, Send, CheckCircle, AlertCircle } from 'lucide-react';
 import api from '../services/api';
@@ -84,7 +85,7 @@ const CriarPedido = () => {
             <header className="bg-white shadow-sm sticky top-0 z-20">
                 <div className="max-w-4xl mx-auto px-4 h-20 flex items-center">
                     <button
-                        onClick={() => navigate('/')}
+                        onClick={() => goBack(navigate)}
                         className="flex items-center gap-2 text-gray-600 hover:text-blue-600 transition mr-4"
                     >
                         <ArrowLeft size={20} />
@@ -206,7 +207,7 @@ const CriarPedido = () => {
                             <div className="flex gap-4 pt-4">
                                 <button
                                     type="button"
-                                    onClick={() => navigate('/')}
+                                    onClick={() => goBack(navigate)}
                                     disabled={loading}
                                     className="flex-1 px-6 py-3 border border-gray-300 text-gray-700 rounded-xl font-semibold hover:bg-gray-50 transition disabled:opacity-50"
                                 >

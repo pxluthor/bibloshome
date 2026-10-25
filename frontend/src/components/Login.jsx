@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { takeReturnPath } from '../utils/navigation';
 import api from '../services/api';
 import { useNavigate, Link } from 'react-router-dom';
 import { LogIn, Lock, Mail } from 'lucide-react';
@@ -26,8 +27,8 @@ const Login = () => {
             localStorage.setItem('userId', response.data.user_id);
             localStorage.setItem('isAdmin', response.data.is_admin);
 
-            // Redirecionar para home
-            navigate('/');
+            // Volta para a tela onde a sessão expirou (ou home)
+            navigate(takeReturnPath('/'), { replace: true });
         } catch (err) {
             setError('Email ou senha inválidos');
         } finally {

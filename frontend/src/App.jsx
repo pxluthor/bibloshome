@@ -1,3 +1,4 @@
+import { rememberReturnPath } from './utils/navigation';
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import api from './services/api'; // Importando sua API configurada
@@ -58,6 +59,7 @@ const PrivateRoute = ({ children }) => {
 
     // Se não estiver autenticado, manda para o login
     if (!isAuthenticated) {
+        rememberReturnPath();
         return <Navigate to="/login" replace />;
     }
 
@@ -101,6 +103,7 @@ const AdminRoute = ({ children }) => {
     }
 
     if (!isAuthenticated) {
+        rememberReturnPath();
         return <Navigate to="/login" replace />;
     }
 

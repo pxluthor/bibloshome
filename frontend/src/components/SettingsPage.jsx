@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { goBack } from '../utils/navigation';
 import { useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, BarChart2, Bot, Check, ChevronRight, CirclePower, Key,
@@ -256,7 +257,7 @@ export default function SettingsPage() {
             <main className="max-w-6xl mx-auto px-4 py-7">
                 <div className="flex items-center justify-between gap-4 mb-6">
                     <div className="flex items-center gap-3 min-w-0">
-                        <button onClick={() => navigate(-1)} className="p-2 rounded-lg hover:bg-gray-200 text-gray-500" title="Voltar"><ArrowLeft size={20} /></button>
+                        <button onClick={() => goBack(navigate)} className="p-2 rounded-lg hover:bg-gray-200 text-gray-500" title="Voltar"><ArrowLeft size={20} /></button>
                         <div className="min-w-0"><h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><Settings size={22} /> Configurações</h1><p className="text-sm text-gray-500 mt-0.5">Gerencie como a inteligência artificial é usada na biblioteca.</p></div>
                     </div>
                     <button onClick={fetchAll} disabled={loading} className="p-2 rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50" title="Atualizar"><RefreshCw size={17} className={loading ? 'animate-spin' : ''} /></button>

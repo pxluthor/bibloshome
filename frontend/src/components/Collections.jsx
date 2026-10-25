@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { goBack } from '../utils/navigation';
 import { cleanTitle } from '../utils/bookTitle';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
@@ -108,7 +109,7 @@ const Collections = () => {
                         <FolderOpen className="h-20 w-20 text-gray-300 mb-4" />
                         <p className="text-lg font-semibold text-gray-700">Nenhuma coleção criada</p>
                         <button
-                            onClick={() => navigate('/')}
+                            onClick={() => goBack(navigate)}
                             className="mt-3 text-sm font-semibold text-blue-600 hover:text-blue-700"
                         >
                             Ir ao acervo →
