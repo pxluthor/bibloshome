@@ -870,7 +870,10 @@ const Estudio = () => {
 
         try {
             const response = await fetch(
-                `${api.defaults.baseURL}/ai/chat/${livroId}`,
+                // With chapters selected, the Estúdio chat answers from the saved chapter summary
+                pageRanges.length
+                    ? `${api.defaults.baseURL}/ai/estudio/${livroId}/chat`
+                    : `${api.defaults.baseURL}/ai/chat/${livroId}`,
                 {
                     method: 'POST',
                     headers: {
@@ -904,9 +907,10 @@ const Estudio = () => {
                         const parsed = JSON.parse(data);
                         if (parsed.error)       assistantText = parsed.error;
                         else if (parsed.token)  assistantText += parsed.token;
+                        const status = parsed.status && !assistantText ? parsed.status : null;
                         setMessages((prev) => {
                             const updated = [...prev];
-                            updated[updated.length - 1] = { role: 'assistant', content: assistantText, loading: false };
+                            updated[updated.length - 1] = { role: 'assistant', content: assistantText, loading: !!status, status };
                             return updated;
                         });
                     } catch {}
@@ -1249,6 +1253,7 @@ const Estudio = () => {
                                                                 <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                                                                 <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
                                                                 <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                                                {msg.status && <span className="ml-2 text-xs text-gray-500">{msg.status}</span>}
                                                             </span>
                                                         ) : (
                                                             <ChatMarkdown content={msg.content} />

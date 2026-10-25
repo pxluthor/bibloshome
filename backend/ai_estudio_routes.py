@@ -22,7 +22,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
-from ai_routes import SSE_HEADERS, VOICE_MAP, _corrigir_pronuncia, _get_user_settings, build_provider
+import unicodedata
+
+from ai_routes import SSE_HEADERS, SYSTEM_CHAT, VOICE_MAP, _corrigir_pronuncia, _get_user_settings, build_provider
 from auth import get_current_user
 from database import get_session, engine
 from models import utcnow, EstudioArtefato, Livro, Usuario
@@ -456,6 +458,7 @@ async def list_saved_artifacts(
         select(EstudioArtefato)
         .where(EstudioArtefato.livro_id == livro_id)
         .where(EstudioArtefato.usuario_id == current_user.id)
+        .where(EstudioArtefato.tipo != CONTEXTO_TIPO)  # internal chat summary, not a user artifact
     ).all()
     return [
         {"tipo": r.tipo, "escopo": r.escopo, "conteudo": r.conteudo, "saved_at": r.saved_at.isoformat()}
@@ -743,3 +746,227 @@ async def video_mp4(
         media_type="video/mp4",
         headers={"Content-Disposition": 'attachment; filename="video.mp4"'},
     )
+
+
+# ── Chat do Estúdio: resumo salvo como contexto + busca de páginas sob demanda ──
+
+CONTEXTO_TIPO = "contexto"  # hidden artifact: dense summary of a chapter selection, reused by the chat
+CONTEXTO_SOURCE_CHARS = 14000
+BUSCA_MAX_PAGES = 6
+BUSCA_PAGE_CHARS = 2000
+BUSCA_PREFIX = "BUSCAR:"
+RESUMO_EXTRA_PAGES = 3
+RESUMO_EXTRA_PAGE_CHARS = 1500
+
+# Adapted from open-notebook's "Dense Summary" (SPR) transformation (MIT)
+SYSTEM_CONTEXTO = (
+    "Voce cria um resumo denso que sera lido por outro modelo de linguagem, nao por humanos. "
+    "Capture o maximo de conceitos, definicoes, regras, exemplos e relacoes com o minimo de palavras, "
+    "em frases completas e curtas, agrupadas por topico. Preserve termos tecnicos e trechos de codigo curtos. "
+    "Ao final de cada frase, cite a pagina de origem no formato (p. N) usando os marcadores [Pagina N] do conteudo. "
+    "Escreva em portugues, independentemente do idioma do conteudo. Maximo 900 palavras. "
+    "Retorne apenas o resumo."
+)
+
+# Not built on SYSTEM_CHAT: its "say you didn't find it" rule made models refuse instead of asking for a lookup.
+SYSTEM_CHAT_RESUMO = (
+    "Voce e um assistente de leitura que ajuda o usuario a entender o livro. Responda em portugues, direto e claro."
+    "\nO contexto abaixo e um RESUMO dos capitulos selecionados, com referencias (p. N), as vezes seguido de"
+    " trechos literais de paginas marcados com [Pagina N]. Prefira os trechos literais para detalhes exatos."
+    "\nSe o contexto basta, responda normalmente citando as paginas no formato (p. N)."
+    "\nNunca diga que a informacao nao esta no livro: o resumo e parcial, o texto completo pode ser consultado."
+    "\nSe a pergunta exigir detalhes que o resumo nao traz (definicao exata, codigo, exemplo, numero, citacao), "
+    f"responda APENAS com uma linha no formato '{BUSCA_PREFIX} termo1; termo2' com 1 a 4 termos de busca "
+    "(palavras que aparecem no texto do livro, de preferencia no idioma do livro). Nada mais."
+)
+
+
+class EstudioChatRequest(BaseModel):
+    message: str = Field(max_length=4000)
+    history: list[dict] = Field(default_factory=list)
+    page_ranges: list[dict] = Field(min_length=1)
+
+
+def _read_pages(livro: Livro, page_ranges: list[dict], pdf_service: PDFService) -> list[tuple[int, str]]:
+    """All non-empty pages of the selection as (page_number, text)."""
+    try:
+        file_path = pdf_service.get_file_path(livro.caminho)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail="Arquivo PDF não encontrado") from exc
+    doc = fitz.open(file_path)
+    try:
+        wanted: set[int] = set()
+        for r in page_ranges:
+            start, end = max(1, int(r.get("start", 1))), min(int(r.get("end", len(doc))), len(doc))
+            wanted.update(range(start, end + 1))
+        pages = []
+        for number in sorted(wanted):
+            text = doc[number - 1].get_text("text").strip()
+            if len(text) >= 20:
+                pages.append((number, text))
+        return pages
+    finally:
+        doc.close()
+
+
+def _sample_marked(pages: list[tuple[int, str]], max_chars: int) -> str:
+    """Evenly sampled pages with [Pagina N] markers, within max_chars."""
+    if not pages:
+        return ""
+    per_page = max(400, max_chars // len(pages))
+    step = max(1, len(pages) * per_page // max_chars) if len(pages) * per_page > max_chars else 1
+    return "\n\n".join(f"[Pagina {n}]\n{t[:per_page]}" for n, t in pages[::step])[:max_chars]
+
+
+def _fold(text: str) -> str:
+    """Casefold and strip accents so 'expressao' matches 'Expressão'."""
+    return "".join(c for c in unicodedata.normalize("NFKD", text.casefold()) if not unicodedata.combining(c))
+
+
+_STOPWORDS = {
+    "qual", "quais", "como", "onde", "quando", "porque", "sobre", "livro", "exatamente", "mostre", "exemplo",
+    "literal", "capitulo", "capitulos", "pagina", "paginas", "explique", "existe", "usado", "usada", "para",
+    "esse", "essa", "este", "esta", "isso", "isto", "pelo", "pela", "entre", "mais", "menos", "muito", "voce",
+}
+# Phrases a model uses when it gives up instead of asking for a lookup
+_NOT_FOUND_PREFIXES = ("nao encontrei", "nao ha informac", "o resumo nao", "nao consta", "nao foi possivel encontrar")
+
+
+def _question_terms(question: str) -> list[str]:
+    """Fallback search terms: the question's meaningful words."""
+    words = re.findall(r"[\w\-\[\]\\^$.*+?|(){}]{4,}", question)
+    seen, terms = set(), []
+    for word in words:
+        word = word.rstrip(".,;:!?")  # sentence punctuation, not part of a regex token
+        key = _fold(word)
+        if len(word) >= 4 and key not in _STOPWORDS and key not in seen:
+            seen.add(key)
+            terms.append(word)
+    return terms[:6]
+
+
+def _search_pages(pages: list[tuple[int, str]], terms: list[str]) -> list[tuple[int, str]]:
+    """Top pages by term hits, returned in reading order."""
+    folded_terms = [_fold(t) for t in terms if t.strip()]
+    scored = []
+    for number, text in pages:
+        folded = _fold(text)
+        hits = sum(folded.count(t) for t in folded_terms)
+        if hits:
+            scored.append((hits, number, text))
+    best = sorted(scored, key=lambda s: -s[0])[:BUSCA_MAX_PAGES]
+    return sorted(((n, t) for _, n, t in best), key=lambda p: p[0])
+
+
+@router.post("/estudio/{livro_id}/chat")
+async def estudio_chat(
+    livro_id: int,
+    body: EstudioChatRequest,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    pdf_service: PDFService = Depends(get_pdf_service),
+):
+    livro = session.get(Livro, livro_id)
+    if not livro or not livro.caminho:
+        raise HTTPException(status_code=404, detail="Livro não encontrado")
+
+    settings = await _get_user_settings(current_user.id, session)
+    provider = build_provider(settings, current_user.id, session)
+    escopo = _escopo(body.page_ranges)
+    usuario_id = current_user.id
+    pages = _read_pages(livro, body.page_ranges, pdf_service)
+    if not pages:
+        raise HTTPException(status_code=422, detail="Não foi possível ler texto dessas páginas")
+
+    saved = session.exec(
+        select(EstudioArtefato)
+        .where(EstudioArtefato.usuario_id == usuario_id)
+        .where(EstudioArtefato.livro_id == livro_id)
+        .where(EstudioArtefato.tipo == CONTEXTO_TIPO)
+        .where(EstudioArtefato.escopo == escopo)
+    ).first()
+    resumo = saved.conteudo if saved and isinstance(saved.conteudo, str) else ""
+    history = [m for m in body.history if m.get("role") in ("user", "assistant")][-12:]
+
+    def event(payload: dict) -> str:
+        return f"data: {json.dumps(payload)}\n\n"
+
+    async def generate():
+        nonlocal resumo
+        try:
+            if not resumo:
+                yield event({"status": "Preparando o resumo destes capítulos (só na primeira vez)…"})
+                resumo = ""
+                async for token in provider.chat(
+                    messages=[{"role": "user", "content": _sample_marked(pages, CONTEXTO_SOURCE_CHARS)}],
+                    model=settings.chat_model, system=SYSTEM_CONTEXTO, stream=False,
+                ):
+                    resumo += token
+                resumo = resumo.strip()
+                if resumo:
+                    with Session(engine) as s:
+                        _persist_artifact(s, usuario_id, livro_id, CONTEXTO_TIPO, escopo, resumo)
+
+            if resumo:
+                # Small models rarely ask for a lookup on their own, so ship the pages that best match
+                # the question's words alongside the summary; BUSCAR still covers wording mismatches.
+                relevantes = _search_pages(pages, _question_terms(body.message))[:RESUMO_EXTRA_PAGES]
+                extras = "".join(
+                    f"\n\n[Página {n}]\n{t[:RESUMO_EXTRA_PAGE_CHARS]}" for n, t in relevantes
+                )
+                content = f"Resumo dos capítulos:\n{resumo}"
+                if extras:
+                    content += f"\n\nTrechos possivelmente relevantes:{extras}"
+                stream = provider.chat(
+                    messages=history + [{"role": "user", "content": f"{content}\n\nPergunta: {body.message}"}],
+                    model=settings.chat_model, system=SYSTEM_CHAT_RESUMO, stream=True,
+                )
+                def needs_lookup(head: str) -> bool:
+                    folded = _fold(head).lstrip("*_# ")
+                    return head.upper().startswith(BUSCA_PREFIX) or folded.startswith(_NOT_FOUND_PREFIXES)
+
+                # Hold back the first ~40 chars: enough to spot a lookup request or a "not found" refusal.
+                buffer, decided, wants_search = "", False, False
+                async for token in stream:
+                    if decided and not wants_search:
+                        yield event({"token": token})
+                        continue
+                    buffer += token
+                    if not decided and len(buffer.lstrip()) >= 40:
+                        decided, wants_search = True, needs_lookup(buffer.lstrip())
+                        if not wants_search:
+                            yield event({"token": buffer})
+                if not decided:
+                    # Short answer, or an empty completion (which falls through to the page lookup).
+                    wants_search = not buffer.strip() or needs_lookup(buffer.lstrip())
+                    if not wants_search:
+                        yield event({"token": buffer})
+                if not wants_search:
+                    return
+                head = buffer.strip()
+                terms = (
+                    [t.strip() for t in head[len(BUSCA_PREFIX):].split(";") if t.strip()][:4]
+                    if head.upper().startswith(BUSCA_PREFIX) else []
+                ) or _question_terms(body.message)
+            else:
+                terms = []
+
+            found = _search_pages(pages, terms) if terms else []
+            if found:
+                yield event({"status": "Consultando as páginas " + ", ".join(str(n) for n, _ in found) + "…"})
+                trechos = "\n\n".join(f"[Página {n}]\n{t[:BUSCA_PAGE_CHARS]}" for n, t in found)
+            else:
+                trechos = _sample_marked(pages, 12000).replace("[Pagina ", "[Página ")
+            contexto = (f"Resumo dos capítulos:\n{resumo}\n\n" if resumo else "") + f"Trechos do livro:\n{trechos}"
+            async for token in provider.chat(
+                messages=history + [{"role": "user", "content": f"{contexto}\n\nPergunta: {body.message}"}],
+                model=settings.chat_model, system=SYSTEM_CHAT, stream=True,
+            ):
+                yield event({"token": token})
+        except Exception as exc:
+            logger.warning("Falha no chat do Estúdio: %s", exc)
+            yield event({"error": str(exc)})
+        finally:
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers=SSE_HEADERS)
