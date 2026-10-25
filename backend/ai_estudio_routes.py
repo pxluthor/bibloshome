@@ -475,7 +475,7 @@ async def save_artifact(
     current_user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    if tipo not in VALID_TIPOS:
+    if tipo not in VALID_TIPOS | {CHAT_TIPO}:
         raise HTTPException(status_code=400, detail=f"tipo inv\u00e1lido: {tipo}")
 
     saved_at = _persist_artifact(session, current_user.id, livro_id, tipo, escopo[:255], body.conteudo)
@@ -750,6 +750,7 @@ async def video_mp4(
 
 # ── Chat do Estúdio: resumo salvo como contexto + busca de páginas sob demanda ──
 
+CHAT_TIPO = "chat"  # saved Estúdio conversation per chapter selection (saved, never generated)
 CONTEXTO_TIPO = "contexto"  # hidden artifact: dense summary of a chapter selection, reused by the chat
 CONTEXTO_SOURCE_CHARS = 14000
 BUSCA_MAX_PAGES = 6

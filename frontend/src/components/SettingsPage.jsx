@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { confirmDialog } from './ConfirmDialog';
 import { goBack } from '../utils/navigation';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -239,7 +240,7 @@ export default function SettingsPage() {
     };
 
     const deleteAccount = async account => {
-        if (!account || !window.confirm(`Excluir a conta "${account.name}"?`)) return;
+        if (!account || !(await confirmDialog(`Excluir a conta "${account.name}"?`, { confirmLabel: 'Excluir' }))) return;
         try {
             await api.delete(`/ai/provider-accounts/${account.id}`);
             if (editingId === account.id) newAccount();

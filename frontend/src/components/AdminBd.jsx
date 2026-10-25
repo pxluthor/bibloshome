@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
+import { confirmDialog } from './ConfirmDialog';
 import { goBack } from '../utils/navigation';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle, ArrowLeft, Database, Loader2, Search, ChevronRight, ChevronDown, Folder, FolderOpen, Flag, Trash2, Users, ShieldCheck, ShieldOff } from 'lucide-react';
@@ -757,7 +758,7 @@ const AdminBd = () => {
         }, [result]);
 
         const handleDelete = async () => {
-            if (!window.confirm(`Excluir permanentemente ${dupes.length} livros marcados como duplicados?`)) return;
+            if (!await confirmDialog(`Excluir permanentemente ${dupes.length} livros marcados como duplicados?`, { confirmLabel: 'Excluir' })) return;
             setDeleting(true);
             try {
                 const r = await api.delete('/documents/marked-duplicates');
@@ -837,7 +838,7 @@ const AdminBd = () => {
 
         const handleToggleAdmin = async (user) => {
             const acao = user.is_admin ? 'remover admin de' : 'tornar admin';
-            if (!window.confirm(`${acao} ${user.nome}?`)) return;
+            if (!await confirmDialog(`${acao} ${user.nome}?`, { confirmLabel: acao, danger: false })) return;
             setActing(user.id);
             try {
                 const r = await api.patch(`/admin/bd/users/${user.id}/toggle-admin`);
@@ -847,7 +848,7 @@ const AdminBd = () => {
         };
 
         const handleDelete = async (user) => {
-            if (!window.confirm(`Excluir permanentemente o usuário ${user.nome} (${user.email})? Todos os dados serão removidos.`)) return;
+            if (!await confirmDialog(`Excluir permanentemente o usuário ${user.nome} (${user.email})? Todos os dados serão removidos.`, { confirmLabel: 'Excluir usuário' })) return;
             setActing(user.id);
             try {
                 await api.delete(`/admin/bd/users/${user.id}`);

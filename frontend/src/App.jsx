@@ -19,6 +19,7 @@ import Statistics from './components/Statistics';
 import EpubReader from './components/EpubReader';
 import SettingsPage from './components/SettingsPage';
 import Toaster from './components/Toaster';
+import { ConfirmHost } from './components/ConfirmDialog';
 
 // --- COMPONENTE DE PROTEÇÃO (GUARDA) REFORMULADO ---
 const PrivateRoute = ({ children }) => {
@@ -119,6 +120,7 @@ function App() {
     return (
         <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <Toaster />
+            <ConfirmHost />
             <Routes>
                 {/* Rotas Públicas */}
                 <Route path="/login" element={<Login />} />

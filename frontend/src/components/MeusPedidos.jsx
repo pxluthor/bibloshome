@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { confirmDialog } from './ConfirmDialog';
 import { goBack } from '../utils/navigation';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, ShoppingBag, Clock, CheckCircle, XCircle, Search, Trash2, Calendar, FileText, Plus, X } from 'lucide-react';
@@ -39,7 +40,7 @@ const MeusPedidos = () => {
     };
 
     const handleDelete = async (pedidoId) => {
-        if (!window.confirm('Tem certeza que deseja cancelar este pedido?')) return;
+        if (!await confirmDialog('Cancelar este pedido?', { confirmLabel: 'Cancelar pedido' })) return;
 
         setDeleting(pedidoId);
         try {

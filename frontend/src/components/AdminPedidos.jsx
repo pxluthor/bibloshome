@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { confirmDialog } from './ConfirmDialog';
 import { goBack } from '../utils/navigation';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Shield, Clock, CheckCircle, XCircle, Search, Filter, User, Mail, Calendar, FileText, Check, X } from 'lucide-react';
@@ -35,7 +36,7 @@ const AdminPedidos = () => {
     };
 
     const handleUpdateStatus = async (pedidoId, newStatus) => {
-        if (!window.confirm(`Tem certeza que deseja alterar o status para "${newStatus}"?`)) return;
+        if (!await confirmDialog(`Alterar o status do pedido para "${newStatus}"?`, { confirmLabel: 'Alterar', danger: false })) return;
 
         setUpdating(pedidoId);
         try {

@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useState, useMemo, useRef } from 'react';
+import { confirmDialog } from './ConfirmDialog';
 import { cleanTitle } from '../utils/bookTitle';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
@@ -41,21 +42,23 @@ const getGradient = (id) => GRADIENTS[id % GRADIENTS.length];
 
 const ITEMS_PER_PAGE = 24;
 
-// Acervo state kept in memory while the app is open, so coming back from a book
-// restores the loaded pages, filters and scroll position without refetching.
-let acervoMemory = null;
+// Per-tab state kept in memory while the app is open, so coming back from a book restores
+// page, filters and scroll. The Acervo also keeps its loaded pages (no refetch); Meus Livros
+// and Recentes refetch their (cheap) lists and restore the rest.
+const listMemory = {};
+const modeFromPath = (path) => (path.startsWith('/meus-livros') ? 'my_list'
+    : path.startsWith('/recentes') ? 'recent'
+        : path.startsWith('/acervo') ? 'all' : null);
 
 const DocumentList = () => {
-    const restoredRef = useRef(
-        window.location.pathname.startsWith('/acervo')
-        && acervoMemory?.user === localStorage.getItem('userName')
-            ? acervoMemory
-            : null
-    );
+    const restoredRef = useRef((() => {
+        const memory = listMemory[modeFromPath(window.location.pathname)];
+        return memory?.user === localStorage.getItem('userName') ? memory : null;
+    })());
     const restored = restoredRef.current;
 
     // --- DADOS ---
-    const [documents, setDocuments] = useState(restored?.documents ?? []);
+    const [documents, setDocuments] = useState(restored?.mode === 'all' ? restored.documents : []);
     const [myListIds, setMyListIds] = useState(new Set());
     const [myListData, setMyListData] = useState({});
     const [myListBooks, setMyListBooks] = useState([]);
@@ -64,7 +67,7 @@ const DocumentList = () => {
     const [availableGenres, setAvailableGenres] = useState([]);
     const [availableTags, setAvailableTags] = useState([]);
     const [folders, setFolders] = useState([]);
-    const [totalItems, setTotalItems] = useState(restored?.totalItems ?? 0);
+    const [totalItems, setTotalItems] = useState(restored?.mode === 'all' ? restored.totalItems : 0);
 
     // --- FILTROS / NAVEGAÇÃO ---
     const location = useLocation();
@@ -86,12 +89,12 @@ const DocumentList = () => {
     const [expandedFolders, setExpandedFolders] = useState({});
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [currentPage, setCurrentPage] = useState(restored?.currentPage ?? 1);
-    const [hasMore, setHasMore] = useState(restored?.hasMore ?? false);
+    const [hasMore, setHasMore] = useState(restored?.mode === 'all' ? restored.hasMore : false);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const sentinelRef = useRef(null);
 
     // --- LOADING ---
-    const [loading, setLoading] = useState(!restored);
+    const [loading, setLoading] = useState(restored?.mode !== 'all');
     const [listLoading, setListLoading] = useState(false);
     const [actionLoading, setActionLoading] = useState(null);
 
@@ -169,25 +172,34 @@ const DocumentList = () => {
 
     // Remember the acervo (pages, filters, scroll) when leaving the screen
     const memoryRef = useRef(null);
-    memoryRef.current = viewMode === 'all' ? {
+    memoryRef.current = viewMode === 'collections' ? null : {
+        mode: viewMode,
         user: localStorage.getItem('userName'),
-        documents, totalItems, hasMore, currentPage,
-        searchTerm, selectedGenre, selectedTag, selectedArea, viewLayout,
-    } : null;
+        currentPage, searchTerm, selectedGenre, selectedTag, selectedArea, viewLayout,
+        ...(viewMode === 'all' ? { documents, totalItems, hasMore } : {}),
+    };
     const scrollYRef = useRef(restored?.scrollY ?? 0);
     useEffect(() => {
-        const onScroll = () => { if (viewMode === 'all') scrollYRef.current = window.scrollY; };
+        scrollYRef.current = viewMode === restoredRef.current?.mode ? scrollYRef.current : 0;
+        const onScroll = () => { scrollYRef.current = window.scrollY; };
         window.addEventListener('scroll', onScroll, { passive: true });
         return () => window.removeEventListener('scroll', onScroll);
     }, [viewMode]);
     useEffect(() => () => {
-        if (memoryRef.current) acervoMemory = { ...memoryRef.current, scrollY: scrollYRef.current };
+        const memory = memoryRef.current;
+        if (memory) listMemory[memory.mode] = { ...memory, scrollY: scrollYRef.current };
     }, []);
 
-    // Back on a restored acervo: jump to where the user was
+    // Back on a restored tab: jump to where the user was, once its content is on screen
+    const scrollRestored = useRef(false);
     useLayoutEffect(() => {
-        if (restoredRef.current?.scrollY) window.scrollTo(0, restoredRef.current.scrollY);
-    }, []);
+        const memory = restoredRef.current;
+        if (scrollRestored.current || !memory?.scrollY || memory.mode !== viewMode) return;
+        const ready = memory.mode === 'all' || (!loading && !listLoading && myListFiltered.length > 0);
+        if (!ready) return;
+        scrollRestored.current = true;
+        window.scrollTo(0, memory.scrollY);
+    });
 
     // Recentes: recarrega sempre que a aba é aberta (o usuário acabou de sair de um livro)
     useEffect(() => {
@@ -229,7 +241,7 @@ const DocumentList = () => {
 
     const applyInitial = (docsData, listItems) => {
         // Restored acervo already has its pages; only refresh the reading list then
-        if (!restoredRef.current) {
+        if (restoredRef.current?.mode !== 'all') {
             setDocuments(Array.isArray(docsData?.items) ? docsData.items : []);
             setTotalItems(docsData?.total ?? 0);
             setHasMore(1 * ITEMS_PER_PAGE < (docsData?.total ?? 0));
@@ -260,7 +272,7 @@ const DocumentList = () => {
             setLoading(false);
         }
         try {
-            if (!snapshot && !restoredRef.current) setLoading(true);
+            if (!snapshot && restoredRef.current?.mode !== 'all') setLoading(true);
             const [docsRes, listRes] = await Promise.all([
                 api.get('/documents', { params: { page: 1, limit: ITEMS_PER_PAGE } }),
                 api.get('/my-list').catch(() => ({ data: [] })),
@@ -378,7 +390,7 @@ const DocumentList = () => {
 
     const handleRemoveFromList = async (e, docId) => {
         e.stopPropagation();
-        if (!window.confirm('Remover este livro da sua lista?')) return;
+        if (!await confirmDialog('Remover este livro da sua lista?', { confirmLabel: 'Remover' })) return;
         setActionLoading(docId);
         try {
             await api.delete(`/my-list/remove/${docId}`);

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { confirmDialog } from './ConfirmDialog';
 import { goBack } from '../utils/navigation';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Save, Loader2, ChevronDown, X, Sparkles, LockOpen } from 'lucide-react';
@@ -151,7 +152,7 @@ const EditBook = () => {
     const [removingPassword, setRemovingPassword] = useState(false);
 
     const handleRemovePassword = async () => {
-        if (!window.confirm('Tentar remover a senha deste PDF? O arquivo original será substituído.')) return;
+        if (!await confirmDialog('Tentar remover a senha deste PDF? O arquivo original será substituído.', { confirmLabel: 'Remover senha' })) return;
         setRemovingPassword(true);
         try {
             const res = await api.post(`/admin/bd/remove-password/${id}`);

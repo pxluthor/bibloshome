@@ -12,6 +12,7 @@ import {
 import api from '../services/api';
 import { toast } from '../utils/toast';
 import ChatMarkdown from './ChatMarkdown';
+import { confirmDialog } from './ConfirmDialog';
 
 // Isola falhas de render de um artefato (ex.: JSON fora do formato) para não derrubar a página.
 class ArtifactBoundary extends React.Component {
@@ -596,6 +597,7 @@ const AudioResumoResult = ({ text }) => {
             await audio.play();
         } catch (e) {
             setLoading(false);
+            toast.error('Não foi possível gerar o áudio. Tente novamente.');
         }
     };
 
@@ -684,6 +686,7 @@ const Estudio = () => {
     const [expandedArtifacts, setExpandedArtifacts] = useState(new Set());
     // Everything persisted for this book, auto-saved on generation: { escopo: { tipo: { result, saved_at } } }
     const [savedAll, setSavedAll] = useState({});
+    const [savedLoaded, setSavedLoaded] = useState(false);
 
     const toggleArtifact = (id) =>
         setExpandedArtifacts((prev) => {
@@ -702,7 +705,8 @@ const Estudio = () => {
                 });
                 setSavedAll(all);
             })
-            .catch(() => {});
+            .catch(() => toast.error('Não foi possível carregar os artefatos salvos deste livro.'))
+            .finally(() => setSavedLoaded(true));
     }, [livroId]);
 
     const rememberSaved = (escopoKey, tipo, result, saved_at) =>
@@ -741,6 +745,39 @@ const Estudio = () => {
     const escopoRef = useRef(escopo);
     escopoRef.current = escopo;
     const savedInfo = savedAll[escopo] || {};
+
+    // Conversation of this chapter selection: load it only when the selection changes,
+    // so a reply that is still streaming is never overwritten.
+    useEffect(() => {
+        if (!savedLoaded || chatLoading) return;
+        const saved = savedAll[escopo]?.chat?.result;
+        setMessages(Array.isArray(saved) ? saved : []);
+    }, [escopo, savedLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const persistChat = async (msgs, chatEscopo) => {
+        const conteudo = msgs.filter((m) => m.content && !m.loading).map(({ role, content }) => ({ role, content })).slice(-40);
+        try {
+            const { data } = await api.post(`/ai/estudio/${livroId}/artifacts/chat`, { conteudo }, { params: { escopo: chatEscopo } });
+            rememberSaved(chatEscopo, 'chat', conteudo, data.saved_at);
+        } catch {
+            toast.error('Não foi possível salvar a conversa.');
+        }
+    };
+
+    const clearChat = async () => {
+        if (!(await confirmDialog('Apagar a conversa destes capítulos?', { confirmLabel: 'Apagar' }))) return;
+        try {
+            await api.delete(`/ai/estudio/${livroId}/artifacts/chat`, { params: { escopo } });
+            setSavedAll((prev) => {
+                const forEscopo = { ...(prev[escopo] || {}) };
+                delete forEscopo.chat;
+                return { ...prev, [escopo]: forEscopo };
+            });
+            setMessages([]);
+        } catch {
+            toast.error('Não foi possível apagar a conversa.');
+        }
+    };
 
     // Show what was already generated for this selection; keep in-flight/error states of the same selection
     useEffect(() => {
@@ -818,7 +855,10 @@ const Estudio = () => {
                 setChapters(r.data.chapters || []);
                 setHasApiToc(r.data.has_toc || false);
             })
-            .catch(() => setChapters([]))
+            .catch(() => {
+                setChapters([]);
+                toast.error('Não foi possível ler o sumário do livro. Adicione os capítulos manualmente.');
+            })
             .finally(() => setChaptersLoading(false));
     }, [livroId]);
 
@@ -869,6 +909,8 @@ const Estudio = () => {
         setMessages((prev) => [...prev, userMsg, { role: 'assistant', content: '', loading: true }]);
         setInput('');
         setChatLoading(true);
+        const chatEscopo = escopo;
+        let finalText = '';
 
         try {
             const response = await fetch(
@@ -918,6 +960,7 @@ const Estudio = () => {
                     } catch {}
                 }
             }
+            finalText = assistantText;
         } catch (e) {
             setMessages((prev) => {
                 const updated = [...prev];
@@ -926,6 +969,9 @@ const Estudio = () => {
             });
         } finally {
             setChatLoading(false);
+        }
+        if (finalText.trim()) {
+            persistChat([...history, userMsg, { role: 'assistant', content: finalText }], chatEscopo);
         }
     };
 
@@ -1224,9 +1270,18 @@ const Estudio = () => {
                                     {/* Badge de contexto */}
                                     <div className="flex-shrink-0 mb-3 flex items-center gap-1.5 text-xs text-purple-700 bg-purple-50 border border-purple-100 rounded-xl px-3 py-2">
                                         <CheckCircle size={12} className="flex-shrink-0" />
-                                        <span>
+                                        <span className="flex-1 min-w-0">
                                             Contexto: <strong>{selectedIds.size} capítulo{selectedIds.size !== 1 ? 's' : ''}</strong> · ~{totalSelectedPages} páginas · leitura direta do PDF
                                         </span>
+                                        {messages.length > 0 && !chatLoading && (
+                                            <button
+                                                onClick={clearChat}
+                                                className="flex-shrink-0 flex items-center gap-1 text-purple-600 hover:text-red-600 transition"
+                                                title="Apagar a conversa destes capítulos"
+                                            >
+                                                <Trash2 size={12} /> Limpar conversa
+                                            </button>
+                                        )}
                                     </div>
 
                                     {/* Mensagens */}
