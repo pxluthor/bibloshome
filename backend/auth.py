@@ -51,4 +51,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), session: Session = Dep
     usuario = session.exec(select(Usuario).where(Usuario.email == email)).first()
     if usuario is None:
         raise credentials_exception
+    if usuario.bloqueado:  # takes effect on the very next request, not only at the next login
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Acesso bloqueado",
+                            headers={"WWW-Authenticate": "Bearer"})
     return usuario

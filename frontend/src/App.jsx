@@ -7,7 +7,7 @@ import api from './services/api'; // Importando sua API configurada
 import DocumentList from './components/DocumentList';
 import PDFReader from './components/PDFReader';
 import Login from './components/Login';
-import Register from './components/Register';
+import ResetPassword from './components/ResetPassword';
 import CriarPedido from './components/CriarPedido';
 import MeusPedidos from './components/MeusPedidos';
 import AdminPedidos from './components/AdminPedidos';
@@ -124,7 +124,8 @@ function App() {
             <Routes>
                 {/* Rotas Públicas */}
                 <Route path="/login" element={<Login />} />
-                <Route path="/register" element={<Register />} />
+                <Route path="/register" element={<Login />} />
+                <Route path="/redefinir-senha" element={<ResetPassword />} />
 
                 {/* Rotas Protegidas */}
                 <Route path="/" element={<Navigate to="/meus-livros" replace />} />

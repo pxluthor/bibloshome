@@ -2,8 +2,9 @@ import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { confirmDialog } from './ConfirmDialog';
 import { goBack } from '../utils/navigation';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, ArrowLeft, Database, Loader2, Search, ChevronRight, ChevronDown, Folder, FolderOpen, Flag, Trash2, Users, ShieldCheck, ShieldOff } from 'lucide-react';
+import { AlertCircle, ArrowLeft, Database, Loader2, Search, ChevronRight, ChevronDown, Folder, FolderOpen, Flag, Trash2, Users, ShieldCheck, ShieldOff, Lock, Unlock, KeyRound, Copy } from 'lucide-react';
 import api from '../services/api';
+import { toast } from '../utils/toast';
 
 const tabs = [
     { id: 'diagnostico', label: 'Diagnostico' },
@@ -847,6 +848,34 @@ const AdminBd = () => {
             finally { setActing(null); }
         };
 
+        const handleToggleBlock = async (user) => {
+            const acao = user.bloqueado ? 'Desbloquear' : 'Bloquear';
+            const aviso = user.bloqueado ? '' : ' A pessoa é desconectada na hora e não consegue mais entrar.';
+            if (!await confirmDialog(`${acao} o acesso de ${user.nome}?${aviso}`, { confirmLabel: acao, danger: !user.bloqueado })) return;
+            setActing(user.id);
+            try {
+                const r = await api.patch(`/admin/bd/users/${user.id}/toggle-block`);
+                setUsers(prev => prev.map(u => u.id === user.id ? { ...u, bloqueado: r.data.bloqueado } : u));
+            } catch (e) { setError(getErrorMessage(e)); }
+            finally { setActing(null); }
+        };
+
+        // One-time reset link (24 h) to send to the user: there is no e-mail server
+        const [resetLink, setResetLink] = useState(null); // { userId, nome, url }
+        const handleResetLink = async (user) => {
+            if (!await confirmDialog(`Gerar um link de redefinição de senha para ${user.nome}? Links anteriores deixam de valer.`, { confirmLabel: 'Gerar link', danger: false })) return;
+            setActing(user.id);
+            try {
+                const r = await api.post(`/admin/bd/users/${user.id}/reset-link`);
+                setResetLink({ userId: user.id, nome: user.nome, url: `${window.location.origin}${r.data.path}` });
+            } catch (e) { setError(getErrorMessage(e)); }
+            finally { setActing(null); }
+        };
+        const copyLink = async () => {
+            try { await navigator.clipboard.writeText(resetLink.url); toast.success('Link copiado.'); }
+            catch { toast.error('Não foi possível copiar; selecione o link manualmente.'); }
+        };
+
         const handleDelete = async (user) => {
             if (!await confirmDialog(`Excluir permanentemente o usuário ${user.nome} (${user.email})? Todos os dados serão removidos.`, { confirmLabel: 'Excluir usuário' })) return;
             setActing(user.id);
@@ -861,6 +890,19 @@ const AdminBd = () => {
 
         return (
             <div className="space-y-4">
+                {resetLink && (
+                    <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 space-y-2" role="status">
+                        <p className="text-sm font-semibold text-blue-900">Link de redefinição para {resetLink.nome} (vale 24 h, uso único)</p>
+                        <div className="flex gap-2">
+                            <input readOnly value={resetLink.url} onFocus={(e) => e.target.select()} aria-label="Link de redefinição"
+                                className="flex-1 min-w-0 rounded-lg border border-blue-200 bg-white px-3 py-2 text-xs font-mono text-gray-700" />
+                            <button onClick={copyLink} className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700">
+                                <Copy size={14} /> Copiar
+                            </button>
+                        </div>
+                        <p className="text-xs text-blue-800">Envie este link à pessoa (WhatsApp, e-mail…). Ele não é exibido de novo.</p>
+                    </div>
+                )}
                 <div className="rounded-xl border bg-white p-5">
                     <h2 className="font-semibold text-gray-900 flex items-center gap-2 mb-4">
                         <Users size={18} className="text-purple-600" />
@@ -885,6 +927,11 @@ const AdminBd = () => {
                                                 Admin
                                             </span>
                                         )}
+                                        {user.bloqueado && (
+                                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 uppercase flex-shrink-0">
+                                                Bloqueado
+                                            </span>
+                                        )}
                                     </div>
                                     <p className="text-xs text-gray-400 truncate">{user.email}</p>
                                 </div>
@@ -904,6 +951,24 @@ const AdminBd = () => {
                                         {acting === user.id
                                             ? <Loader2 size={16} className="animate-spin" />
                                             : user.is_admin ? <ShieldOff size={16} /> : <ShieldCheck size={16} />}
+                                    </button>
+                                    <button
+                                        onClick={() => handleResetLink(user)}
+                                        disabled={acting === user.id}
+                                        title="Gerar link de redefinição de senha"
+                                        aria-label={`Gerar link de redefinição de senha para ${user.nome}`}
+                                        className="p-1.5 rounded-lg text-gray-400 hover:bg-blue-50 hover:text-blue-600 transition"
+                                    >
+                                        <KeyRound size={16} />
+                                    </button>
+                                    <button
+                                        onClick={() => handleToggleBlock(user)}
+                                        disabled={acting === user.id}
+                                        title={user.bloqueado ? 'Desbloquear acesso' : 'Bloquear acesso'}
+                                        aria-label={`${user.bloqueado ? 'Desbloquear' : 'Bloquear'} acesso de ${user.nome}`}
+                                        className={`p-1.5 rounded-lg transition ${user.bloqueado ? 'text-red-600 hover:bg-red-50' : 'text-gray-400 hover:bg-gray-100 hover:text-red-600'}`}
+                                    >
+                                        {user.bloqueado ? <Unlock size={16} /> : <Lock size={16} />}
                                     </button>
                                     <button
                                         onClick={() => handleDelete(user)}

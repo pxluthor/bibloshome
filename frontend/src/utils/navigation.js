@@ -10,7 +10,7 @@ const RETURN_KEY = 'returnTo';
 
 export function rememberReturnPath() {
     const path = window.location.pathname + window.location.search;
-    if (path.startsWith('/') && !path.startsWith('/login') && !path.startsWith('/register')) {
+    if (path.startsWith('/') && !path.startsWith('/login') && !path.startsWith('/register') && !path.startsWith('/redefinir-senha')) {
         try { sessionStorage.setItem(RETURN_KEY, path); } catch {}
     }
 }

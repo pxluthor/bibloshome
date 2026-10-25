@@ -1,6 +1,9 @@
+import hashlib
 import os
 import logging
+import secrets
 import threading
+from datetime import timedelta
 from pathlib import PureWindowsPath
 
 import mysql.connector
@@ -12,7 +15,7 @@ from sqlmodel import Session, select
 from auth import get_current_user
 from capas import gerar_capas_automaticas
 from database import get_session
-from models import Livro, Usuario
+from models import Livro, Usuario, utcnow
 from services import get_pdf_service, PDFService
 
 # Estado da task de geração de capas (em memória, não persiste entre restarts)
@@ -477,6 +480,7 @@ def list_users(
             'nome': u.nome,
             'email': u.email,
             'is_admin': u.is_admin,
+            'bloqueado': u.bloqueado,
             'created_at': u.created_at,
         }
         for u in users
@@ -499,6 +503,43 @@ def toggle_admin(
     session.add(user)
     session.commit()
     return {'id': user.id, 'nome': user.nome, 'is_admin': user.is_admin}
+
+
+@router.patch('/users/{user_id}/toggle-block')
+def toggle_block(
+    user_id: int,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    _require_admin(current_user)
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail='Voce nao pode bloquear sua propria conta')
+    user = session.get(Usuario, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail='Usuário não encontrado')
+    user.bloqueado = not user.bloqueado
+    session.add(user)
+    session.commit()
+    return {'id': user.id, 'nome': user.nome, 'bloqueado': user.bloqueado}
+
+
+@router.post('/users/{user_id}/reset-link')
+def create_reset_link(
+    user_id: int,
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """One-time password reset link (24 h) for the admin to send to the user."""
+    _require_admin(current_user)
+    user = session.get(Usuario, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail='Usuário não encontrado')
+    token = secrets.token_urlsafe(32)
+    user.reset_token_hash = hashlib.sha256(token.encode()).hexdigest()
+    user.reset_expira = utcnow() + timedelta(hours=24)
+    session.add(user)
+    session.commit()
+    return {'path': f'/redefinir-senha?token={token}', 'expira': user.reset_expira}
 
 
 @router.delete('/users/{user_id}')

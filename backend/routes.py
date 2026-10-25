@@ -6,8 +6,11 @@ from slowapi.util import get_remote_address
 limiter = Limiter(key_func=get_remote_address)
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select, func
+import hashlib
 import re
 import unicodedata
+from datetime import timezone
+from pydantic import BaseModel
 from sqlalchemy import String, and_, case, cast, or_, func as sa_func
 from sqlalchemy.orm import defer
 from typing import List, Optional
@@ -377,6 +380,8 @@ def login(request: Request, user_data: UsuarioLogin, session: Session = Depends(
     # Valida senha
     if not user or not verify_password(user_data.senha, user.senha_hash):
         raise HTTPException(status_code=400, detail="Email ou senha incorretos")
+    if user.bloqueado:
+        raise HTTPException(status_code=403, detail="Acesso bloqueado. Fale com o administrador.")
     
     # Gera Token
     access_token = create_access_token(data={"sub": user.email})
@@ -388,6 +393,32 @@ def login(request: Request, user_data: UsuarioLogin, session: Session = Depends(
         "user_id": user.id,
         "is_admin": user.is_admin
     }
+
+class ResetPasswordBody(BaseModel):
+    token: str
+    senha: str
+
+
+@router.post("/auth/reset-password")
+@limiter.limit("5/minute")
+def reset_password(request: Request, body: ResetPasswordBody, session: Session = Depends(get_session)):
+    """Sets a new password from a one-time link an admin generated (no e-mail server)."""
+    if len(body.senha) < 6:
+        raise HTTPException(status_code=400, detail="A senha precisa ter pelo menos 6 caracteres")
+    token_hash = hashlib.sha256(body.token.encode()).hexdigest()
+    user = session.exec(select(Usuario).where(Usuario.reset_token_hash == token_hash)).first()
+    expira = user.reset_expira if user else None
+    if expira and expira.tzinfo is None:
+        expira = expira.replace(tzinfo=timezone.utc)  # MySQL DATETIME comes back naive (stored as UTC)
+    if not user or not expira or expira < utcnow():
+        raise HTTPException(status_code=400, detail="Link inválido ou expirado. Peça um novo ao administrador.")
+    user.senha_hash = get_password_hash(body.senha)
+    user.reset_token_hash = None
+    user.reset_expira = None
+    session.add(user)
+    session.commit()
+    return {"message": "Senha redefinida. Faça login com a nova senha."}
+
 
 # --- 3. ADICIONAR LIVRO À LISTA ---
 @router.post("/my-list/add2")

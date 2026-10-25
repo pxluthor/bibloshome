@@ -225,3 +225,4 @@ html.dark .hover\:bg-slate-50:hover { background-color:rgb(100 116 139 / 0.14); 
 html.dark .hover\:bg-slate-100:hover { background-color:rgb(100 116 139 / 0.20); }
 html.dark .hover\:text-slate-700:hover { color:#cbd5e1; }
 html.dark .hover\:text-slate-800:hover { color:#cbd5e1; }
+html.dark .border-white { border-color:#161b26; }
