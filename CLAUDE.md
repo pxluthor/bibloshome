@@ -33,6 +33,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > resultando em perda de dados (lista de leitura, coleções, progresso). Dados de arquivos
 > em E:\BIBLIOTECA são sempre preservados; apenas metadados do banco são perdidos.
 
+### Ajuste de desempenho do MySQL (25/10/2026)
+
+`innodb_buffer_pool_size` foi elevado de 128 MB para **512 MB** com `SET PERSIST` (gravado em
+`mysqld-auto.cnf`, dentro do volume `mysql_data`). Com 128 MB o banco inteiro (~123 MB, quase tudo
+capas em MEDIUMBLOB) não cabia no cache e a listagem do acervo tinha picos de 1–2,4 s. Se o volume
+for recriado, reaplicar:
+
+```bash
+docker exec bibloshome-db mysql -uroot -proot -e "SET PERSIST innodb_buffer_pool_size = 536870912;"
+```
+
 ---
 
 ## Common Commands
