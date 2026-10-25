@@ -308,7 +308,16 @@ class CodexOAuthProvider(AIProvider):
         raise NotImplementedError("Codex OAuth não suporta embeddings; use Ollama.")
 
     async def list_models(self) -> list[str]:
-        return ["gpt-5.5", "gpt-5.3-codex-spark", "gpt-4o", "gpt-4.1"]
+        """Models the ChatGPT account can use right now (the catalog changes; never hardcode it)."""
+        # shortcut: an old client_version gets an empty list; bump it if the list ever comes back empty
+        try:
+            async with AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+                r = await client.get(f"{self.BACKEND_URL}/models", params={"client_version": "1.0.0"},
+                                     headers=self._headers())
+                r.raise_for_status()
+            return [m["slug"] for m in r.json().get("models", []) if m.get("visibility") == "list" and m.get("slug")]
+        except Exception:
+            return []
 
     async def is_available(self) -> bool:
         return bool(self.token)
@@ -407,12 +416,15 @@ class ClaudeOAuthProvider(AIProvider):
         raise NotImplementedError("Claude OAuth não suporta embeddings; use Ollama.")
 
     async def list_models(self) -> list[str]:
-        return [
-            "claude-opus-4-8",
-            "claude-sonnet-5",
-            "claude-sonnet-4-6",
-            "claude-haiku-4-5-20251001",
-        ]
+        """Models the subscription can use right now, newest first (from /v1/models)."""
+        try:
+            async with AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+                r = await client.get("https://api.anthropic.com/v1/models", params={"limit": 100},
+                                     headers=self._headers())
+                r.raise_for_status()
+            return [m["id"] for m in r.json().get("data", []) if m.get("id")]
+        except Exception:
+            return []
 
     async def is_available(self) -> bool:
         return bool(self.access_token)

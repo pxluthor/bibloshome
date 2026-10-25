@@ -364,6 +364,29 @@ async def list_providers(
     codex_status = get_codex_status(current_user.id, session)
     claude_status = get_claude_status(current_user.id, session)
 
+    # Live model catalogs: the subscriptions retire and add models (e.g. gpt-5.5 disappeared)
+    codex_models: list[str] = []
+    if codex_status["authenticated"]:
+        creds = get_codex_credentials(current_user.id, session) or {}
+        token = creds.get("apiKey") or creds.get("accessToken")
+        if token:
+            codex_models = await CodexOAuthProvider(token, creds.get("accountId")).list_models()
+    claude_models: list[str] = []
+    if claude_status["authenticated"]:
+        creds = refresh_claude_if_needed(current_user.id, session) or {}
+        if creds.get("accessToken"):
+            claude_models = await ClaudeOAuthProvider(creds["accessToken"]).list_models()
+
+    # Saved model no longer offered: switch to a valid one so the chat keeps working
+    settings = await _get_user_settings(current_user.id, session)
+    live = {"codex": codex_models, "claude": claude_models}.get(settings.provider)
+    if live and settings.chat_model not in live:
+        preferred = next((m for m in live if "sonnet" in m), live[0]) if settings.provider == "claude" else live[0]
+        logger.info("Modelo %s indisponível em %s; trocando para %s", settings.chat_model, settings.provider, preferred)
+        settings.chat_model = preferred
+        session.add(settings)
+        session.commit()
+
     return {
         "ollama": {"available": available_ollama, "models": ollama_models},
         "openai": {
@@ -375,7 +398,7 @@ async def list_providers(
             "authenticated": codex_status["authenticated"],
             "hasApiKey": codex_status["hasApiKey"],
             "accountId": codex_status["accountId"],
-            "models": ["gpt-5.5", "gpt-5.3-codex-spark", "gpt-4o", "gpt-4.1"],
+            "models": codex_models,
         },
         "claude": {
             "available": claude_status["authenticated"],
@@ -383,12 +406,7 @@ async def list_providers(
             "subscriptionType": claude_status["subscriptionType"],
             "accountEmail": claude_status["accountEmail"],
             "hasInferenceScope": claude_status["hasInferenceScope"],
-            "models": [
-                "claude-opus-4-8",
-                "claude-sonnet-5",
-                "claude-sonnet-4-6",
-                "claude-haiku-4-5-20251001",
-            ],
+            "models": claude_models,
         },
     }
 

@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -5,6 +7,7 @@ from sqlmodel import Session
 
 from auth import get_current_user
 from database import get_session
+from ai.providers import CodexOAuthProvider
 from models import Usuario
 
 from .codex_credentials import (
@@ -23,7 +26,7 @@ router = APIRouter(prefix="/api/codex-oauth", tags=["codex-oauth"])
 
 
 class ProbeBody(BaseModel):
-    model: str = "gpt-5.5"
+    model: str = ""  # empty = first model the account offers
 
 
 @router.get("/status")
@@ -85,8 +88,11 @@ def codex_probe(
     account_id = creds.get("accountId")
 
     # resolve aliases de modelo
-    model_map = {"codexplan": "gpt-5.5", "codexspark": "gpt-5.3-codex-spark"}
-    model = model_map.get(body.model, body.model)
+    model = body.model
+    if not model or model in ("codexplan", "codexspark"):  # legacy aliases pointed at retired models
+        # sync endpoint runs in a worker thread (no event loop), so asyncio.run is safe here
+        offered = asyncio.run(CodexOAuthProvider(token, account_id).list_models())
+        model = offered[0] if offered else "gpt-5.6-luna"
 
     headers = {"Authorization": f"Bearer {token}"}
     if account_id:

@@ -56,11 +56,11 @@ export default function SettingsPage() {
     const [codexConnecting, setCodexConnecting] = useState(false);
     const [codexUsage, setCodexUsage] = useState(null);
     const [codexUsageLoading, setCodexUsageLoading] = useState(false);
-    const [codexModel, setCodexModel] = useState('gpt-5.5');
+    const [codexModel, setCodexModel] = useState('');
     const [claudeConnecting, setClaudeConnecting] = useState(false);
     const [claudeUsage, setClaudeUsage] = useState(null);
     const [claudeUsageLoading, setClaudeUsageLoading] = useState(false);
-    const [claudeModel, setClaudeModel] = useState('claude-sonnet-5');
+    const [claudeModel, setClaudeModel] = useState('');
     const [editingId, setEditingId] = useState(null);
     const [accountForm, setAccountForm] = useState(EMPTY_ACCOUNT);
     const [accountSaving, setAccountSaving] = useState(false);
@@ -80,8 +80,13 @@ export default function SettingsPage() {
             setProvider(currentProvider);
             setModel(currentModel);
             setHasApiKey(settingsResponse.data.has_openai_key || false);
-            if (currentProvider === 'codex' && currentModel) setCodexModel(currentModel);
-            if (currentProvider === 'claude' && currentModel) setClaudeModel(currentModel);
+            // Lists come live from the providers; keep the saved model only if it is still offered
+            const pick = (models, saved) => (models.includes(saved) ? saved : models[0] || '');
+            const codexModels = providerResponse.data.codex?.models || [];
+            const claudeModels = providerResponse.data.claude?.models || [];
+            setCodexModel(pick(codexModels, currentProvider === 'codex' ? currentModel : ''));
+            setClaudeModel(pick(claudeModels, currentProvider === 'claude' ? currentModel : '')
+                || claudeModels.find((m) => m.includes('sonnet')) || '');
         } catch (error) {
             toast.error(errorMessage(error, 'Erro ao carregar configurações de IA.'));
         } finally {
