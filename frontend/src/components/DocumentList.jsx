@@ -10,6 +10,7 @@ import { createPortal } from 'react-dom';
 import api from '../services/api';
 import BookCardSkeleton from './BookCardSkeleton';
 import AppHeader from './AppHeader';
+import MetadataBatchBar from './MetadataBatchBar';
 import BookCard from './BookCard';
 import BookListRow from './BookListRow';
 import FilterPanel from './FilterPanel';
@@ -459,6 +460,7 @@ const DocumentList = () => {
                 isAdmin={isAdmin}
                 pedidosPendentes={pedidosPendentes}
                 adminPendentes={adminPendentes}
+                counts={{ meusLivros: myListIds.size, colecoes: collections.length }}
             />
 
             <main className="max-w-7xl mx-auto px-4 py-4 sm:py-8">
@@ -466,7 +468,11 @@ const DocumentList = () => {
                 <div className="flex flex-col gap-3 mb-6">
                     {/* Linha 1: Tabs + Toggle de layout */}
                     <div className="flex items-center gap-2">
-                        <div className="flex flex-1 min-w-0 bg-white p-1 rounded-xl shadow-sm border border-gray-200">
+                        {/* Desktop: navigation lives in the sidebar, show the section title instead of tabs */}
+                        <h1 className="hidden lg:block flex-1 min-w-0 text-2xl font-bold text-gray-900 truncate">
+                            {{ all: 'Acervo Completo', recent: 'Recentes', my_list: 'Meus Livros', collections: 'Coleções' }[viewMode]}
+                        </h1>
+                        <div className="flex flex-1 min-w-0 bg-white p-1 rounded-xl shadow-sm border border-gray-200 lg:hidden">
                             <button
                                 onClick={() => navigate('/acervo')}
                                 className={`flex-1 flex items-center justify-center gap-1.5 px-2 sm:px-5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${viewMode === 'all' ? 'bg-blue-100 text-blue-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}
@@ -548,6 +554,8 @@ const DocumentList = () => {
                         )}
                     </div>
                 </div>
+
+                {isAdmin && viewMode === 'all' && <MetadataBatchBar />}
 
                 {/* ── FILTROS ── */}
                 <FilterPanel

@@ -537,9 +537,11 @@ async def _run_batch(admin_id: int, limit: int | None):
                         session.add(livro)
                         session.commit()
                         _batch["updated"] += 1
-            except Exception as exc:  # one bad book must not stop the batch
+            except Exception as exc:  # pause on any error so nothing is half-processed unnoticed
                 _batch["failed"] += 1
                 _batch["errors"] = (_batch["errors"] + [f"{livro_id}: {exc}"])[-10:]
+                _batch["paused_reason"] = f"Pausado por erro no livro {livro_id}: {exc}"
+                _batch["stop"] = True
                 logger.warning("Metadados em lote falharam para o livro %s: %s", livro_id, exc)
             finally:
                 _batch["processed"] += 1

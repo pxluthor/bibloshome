@@ -76,3 +76,11 @@
     -webkit-text-fill-color: #000000 !important;
   }
 }
+
+/* Desktop sidebar (AppSidebar): push page content right of the floating panel */
+@media (min-width: 1024px) {
+    body.has-sidebar #root {
+        padding-left: calc(var(--sidebar-w, 272px) + 24px);
+        transition: padding-left 0.3s ease-out;
+    }
+}
