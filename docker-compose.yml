@@ -54,6 +54,12 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      # Entrar com MyGroups (OIDC). Segredo só no .env (nunca em VITE_*); callback cadastrado no MyGroups
+      MYGROUPS_ISSUER: ${MYGROUPS_ISSUER:-https://mygroups.pxluthor.com.br/oidc}
+      MYGROUPS_CLIENT_ID: ${MYGROUPS_CLIENT_ID:-bibloshome}
+      MYGROUPS_CLIENT_SECRET: ${MYGROUPS_CLIENT_SECRET:-}
+      MYGROUPS_REDIRECT_URI: ${MYGROUPS_REDIRECT_URI:-https://library.pxluthor.com.br/api/auth/mygroups/callback}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-https://library.pxluthor.com.br}
     ports:
       - "8001:8001"
       # Callbacks OAuth (Codex/Claude) — o navegador do host redireciona para

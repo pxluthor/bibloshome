@@ -90,6 +90,17 @@ class ListaLeitura(SQLModel, table=True):
 class ListaLeituraUpdate(SQLModel):
     status: str
 
+# --- LOGIN EXTERNO (OIDC): conta local vinculada só por (issuer, sub), nunca por e-mail ---
+class UsuarioIdentidade(SQLModel, table=True):
+    __tablename__ = "usuario_identidades"
+    __table_args__ = (UniqueConstraint("issuer", "sub", name="uq_identidade_issuer_sub"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    issuer: str = Field(max_length=255)
+    sub: str = Field(max_length=255)
+    criado_em: datetime = Field(default_factory=utcnow)
+
 # --- RECENTES (último acesso por livro) ---
 class LivroAcesso(SQLModel, table=True):
     __tablename__ = "livros_acessos"

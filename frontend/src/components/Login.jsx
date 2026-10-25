@@ -68,6 +68,32 @@ const saveSession = (data) => {
 
 const RESEND_COOLDOWN = 30;
 
+const MYGROUPS_ERRORS = {
+    cancelado: 'Login com MyGroups cancelado.',
+    recusado: 'O MyGroups recusou o login.',
+    state_invalido: 'A sessão de login expirou ou é inválida. Tente novamente.',
+    expirado: 'O código do MyGroups expirou. Tente novamente.',
+    invalido: 'Não foi possível validar o login com MyGroups.',
+    indisponivel: 'O MyGroups está indisponível no momento. Tente mais tarde.',
+    bloqueado: 'Acesso bloqueado. Fale com o administrador.',
+};
+
+// Full-page navigation to the same-origin backend route (nginx /api proxy): the OIDC flow runs server-side
+const MyGroupsButton = ({ label }) => (
+    <>
+        <div className="flex items-center gap-3 text-xs text-gray-400">
+            <span className="flex-1 h-px bg-gray-200" /> ou <span className="flex-1 h-px bg-gray-200" />
+        </div>
+        <a
+            href="/api/auth/mygroups/login"
+            className="w-full h-12 rounded-xl border border-gray-200 bg-white text-sm font-semibold text-gray-800 hover:bg-gray-50 transition flex items-center justify-center gap-2"
+        >
+            <span aria-hidden="true" className="grid place-items-center w-6 h-6 rounded-md bg-emerald-600 text-white text-xs font-bold">M</span>
+            {label}
+        </a>
+    </>
+);
+
 // Step shown after sign-up (or a login with an unconfirmed e-mail): 6-digit code sent by e-mail
 const VerifyEmailStep = ({ email, onBack, onVerified }) => {
     const [codigo, setCodigo] = useState('');
@@ -152,6 +178,32 @@ const Login = ({ initialMode = 'login' }) => {
 
     const [reg, setReg] = useState({ nome: '', email: '', senha: '' });
     const [verifyEmail, setVerifyEmail] = useState(null); // e-mail waiting for its code
+    const [mygroupsLoading, setMygroupsLoading] = useState(false);
+
+    // Back from MyGroups: show its error, or exchange the one-time HttpOnly cookie for the session
+    useEffect(() => {
+        const params = new URLSearchParams(location.search);
+        const erro = params.get('mygroups_erro');
+        if (erro) {
+            setLoginError(MYGROUPS_ERRORS[erro] || MYGROUPS_ERRORS.invalido);
+            window.history.replaceState(null, '', '/login');
+            return;
+        }
+        if (params.get('mygroups') !== 'ok') return;
+        setMygroupsLoading(true);
+        fetch('/api/auth/mygroups/session', { method: 'POST', credentials: 'same-origin' })
+            .then(async (r) => {
+                const data = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(data.detail || MYGROUPS_ERRORS.invalido);
+                saveSession(data);
+                navigate(takeReturnPath('/'), { replace: true });
+            })
+            .catch((err) => {
+                setLoginError(err.message);
+                window.history.replaceState(null, '', '/login');
+            })
+            .finally(() => setMygroupsLoading(false));
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
     const [regError, setRegError] = useState('');
     const [regLoading, setRegLoading] = useState(false);
 
@@ -227,7 +279,8 @@ const Login = ({ initialMode = 'login' }) => {
                     Peça ao administrador da biblioteca um link de redefinição de senha. O link vale por 24 horas.
                 </p>
             )}
-            <SubmitButton loading={loginLoading}>Entrar</SubmitButton>
+            <SubmitButton loading={loginLoading || mygroupsLoading}>Entrar</SubmitButton>
+            <MyGroupsButton label="Entrar com MyGroups" />
             <p className="md:hidden text-center text-sm text-gray-600">
                 Não tem conta? <button type="button" onClick={() => switchTo('register')} className="font-semibold text-blue-600">Cadastre-se</button>
             </p>
@@ -250,6 +303,7 @@ const Login = ({ initialMode = 'login' }) => {
                 <PasswordField id="reg-senha" value={reg.senha} onChange={(e) => setReg({ ...reg, senha: e.target.value })} autoComplete="new-password" />
             </Field>
             <SubmitButton loading={regLoading}>Cadastrar</SubmitButton>
+            <MyGroupsButton label="Cadastrar com MyGroups" />
             <p className="md:hidden text-center text-sm text-gray-600">
                 Já tem conta? <button type="button" onClick={() => switchTo('login')} className="font-semibold text-blue-600">Entrar</button>
             </p>

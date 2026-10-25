@@ -44,6 +44,20 @@ for recriado, reaplicar:
 docker exec bibloshome-db mysql -uroot -proot -e "SET PERSIST innodb_buffer_pool_size = 536870912;"
 ```
 
+### Entrar com MyGroups (OIDC) — 25/10/2026
+
+- Provedor: `https://mygroups.pxluthor.com.br/oidc` (Authorization Code + PKCE S256, `client_secret_basic`, RS256).
+- Cliente `bibloshome`; callback cadastrado **exato**: `https://library.pxluthor.com.br/api/auth/mygroups/callback`.
+- Caminho: o nginx do frontend faz proxy de `/api/auth/mygroups/*` para `backend:8001/auth/mygroups/*`
+  (mesma origem do app). Código em `backend/mygroups_oidc.py`.
+- Segredo: só `MYGROUPS_CLIENT_SECRET` no `.env` da raiz (origem: `D:\mygroups\apps\identity\.secrets\bibloshome.json`).
+  Nunca em `VITE_*`, frontend, log ou commit. Trocou no MyGroups → atualizar o `.env` e recriar o backend.
+- Contas vinculadas só por `(issuer, sub)` na tabela `usuario_identidades`; o e-mail do MyGroups é ignorado.
+  Conta criada por esse login recebe e-mail interno `<sub>@mygroups.invalid` e não tem login por senha.
+- State/nonce/verifier e o cookie de entrega da sessão ficam **em memória** (1 processo uvicorn).
+  Se o backend passar a usar `--workers`, mover para tabela no banco.
+- Erros voltam para `/login?mygroups_erro=cancelado|recusado|state_invalido|expirado|invalido|indisponivel|bloqueado`.
+
 ---
 
 ## Common Commands
