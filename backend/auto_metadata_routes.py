@@ -38,7 +38,11 @@ def extract_search_query(caminho: str) -> str:
 
 
 class GoogleBooksQuotaExceeded(Exception):
-    """Daily quota used up (HTTP 429)."""
+    """Daily quota used up (HTTP 429) or service down (5xx): the batch pauses instead of degrading."""
+
+    def __init__(self, reason: str = "Cota diária do Google Books esgotada. Inicie de novo amanhã para continuar."):
+        super().__init__(reason)
+        self.reason = reason
 
 
 async def search_google_books(query: str, raise_on_quota: bool = False) -> list:
@@ -55,6 +59,8 @@ async def search_google_books(query: str, raise_on_quota: bool = False) -> list:
         return []
     if response.status_code == 429 and raise_on_quota:
         raise GoogleBooksQuotaExceeded()
+    if response.status_code >= 500 and raise_on_quota:
+        raise GoogleBooksQuotaExceeded("Google Books indisponível no momento. Tente iniciar de novo em alguns minutos.")
     if response.status_code != 200:
         return []
     data = response.json()
@@ -522,9 +528,9 @@ async def _run_batch(admin_id: int, limit: int | None):
                     _batch["current"] = livro.titulo
                     try:
                         meta = await suggest_metadata_free(livro, pdf_service)
-                    except GoogleBooksQuotaExceeded:
+                    except GoogleBooksQuotaExceeded as exc:
                         # Stop instead of filling the rest without Google data; rerun picks up from here.
-                        _batch["paused_reason"] = "Cota diária do Google Books esgotada. Inicie de novo amanhã para continuar."
+                        _batch["paused_reason"] = exc.reason
                         _batch["stop"] = True
                         break
                     if _apply_missing(livro, meta):

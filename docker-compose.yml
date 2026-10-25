@@ -42,9 +42,10 @@ services:
       PASTA_BIBLIOTECA: /data/biblioteca
       FOR_INSERT_DIR: /data/for_insert
       # Estúdio: busca de vídeos de reforço (YouTube Data API v3)
-      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
-      # Metadados em lote: chave gratuita (1000 consultas/dia); sem ela a cota anônima vive esgotada
-      GOOGLE_BOOKS_API_KEY: ${GOOGLE_BOOKS_API_KEY:-}
+      # Uma chave Google (projeto homedev) restrita a Books API + YouTube Data API v3, em GOOGLE_API_KEY no .env
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-${GOOGLE_API_KEY:-}}
+      # Metadados em lote: 1000 consultas/dia; sem chave a cota anônima vive esgotada
+      GOOGLE_BOOKS_API_KEY: ${GOOGLE_BOOKS_API_KEY:-${GOOGLE_API_KEY:-}}
     ports:
       - "8001:8001"
       # Callbacks OAuth (Codex/Claude) — o navegador do host redireciona para
