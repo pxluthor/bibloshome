@@ -210,9 +210,10 @@ const MetadadosTab = () => {
                 <div>
                     <h2 className="font-semibold text-gray-900">Preencher metadados do acervo</h2>
                     <p className="text-sm text-gray-500 mt-1">
-                        Para cada livro sem autor, busca no Google Books / Open Library e usa a IA configurada para
-                        sugerir autor, editora, ano, idioma, gênero, tags e sinopse. Só preenche campos vazios — nunca
-                        sobrescreve dados nem altera o título. Roda em segundo plano (~2 s por livro).
+                        Para cada livro sem autor, busca no Google Books (e Open Library) e preenche autor, editora,
+                        ano, idioma, gênero, tags e sinopse — sem usar IA, sem custo. Sem resultado confiável, usa o
+                        autor entre parênteses no nome do arquivo. Só preenche campos vazios, nunca altera o título.
+                        Roda em segundo plano (~4 s por livro); a cota do Google Books é de 1000 livros por dia.
                     </p>
                 </div>
 
@@ -245,6 +246,9 @@ const MetadadosTab = () => {
                     </div>
                 )}
 
+                {status?.paused_reason && !status.running && (
+                    <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{status.paused_reason}</p>
+                )}
                 {status?.finished_at && !status.running && (
                     <p className="text-sm text-gray-600">
                         Último lote: {status.processed} processados · {status.updated} atualizados · {status.failed} falhas

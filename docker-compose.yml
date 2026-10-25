@@ -43,6 +43,8 @@ services:
       FOR_INSERT_DIR: /data/for_insert
       # Estúdio: busca de vídeos de reforço (YouTube Data API v3)
       YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+      # Metadados em lote: chave gratuita (1000 consultas/dia); sem ela a cota anônima vive esgotada
+      GOOGLE_BOOKS_API_KEY: ${GOOGLE_BOOKS_API_KEY:-}
     ports:
       - "8001:8001"
       # Callbacks OAuth (Codex/Claude) — o navegador do host redireciona para

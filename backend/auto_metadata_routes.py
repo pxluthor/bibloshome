@@ -1,7 +1,9 @@
 import asyncio
 import json
 import logging
+import os
 import re
+import unicodedata
 from datetime import datetime
 
 import httpx
@@ -35,17 +37,27 @@ def extract_search_query(caminho: str) -> str:
     return filename
 
 
-async def search_google_books(query: str) -> list:
+class GoogleBooksQuotaExceeded(Exception):
+    """Daily quota used up (HTTP 429)."""
+
+
+async def search_google_books(query: str, raise_on_quota: bool = False) -> list:
     url = "https://www.googleapis.com/books/v1/volumes"
     params = {"q": query, "maxResults": 3, "printType": "books"}
+    # Without a key every anonymous caller shares one tiny daily quota (429 most of the day)
+    api_key = os.getenv("GOOGLE_BOOKS_API_KEY")
+    if api_key:
+        params["key"] = api_key
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.get(url, params=params)
-            if response.status_code != 200:
-                return []
-            data = response.json()
     except Exception:
         return []
+    if response.status_code == 429 and raise_on_quota:
+        raise GoogleBooksQuotaExceeded()
+    if response.status_code != 200:
+        return []
+    data = response.json()
 
     results = []
     for item in data.get("items", [])[:3]:
@@ -351,6 +363,92 @@ async def suggest_metadata(livro: Livro, current_user: Usuario, session: Session
     }
 
 
+# ── Sugestão sem IA (custo zero): só APIs públicas + nome do arquivo ─────────
+
+GENEROS_MAP = {
+    "history": "Historia", "literature": "Literatura", "fiction": "Literatura", "science": "Ciencia e Tecnologia",
+    "technology": "Ciencia e Tecnologia", "computers": "Ciencia e Tecnologia", "mathematics": "Ciencia e Tecnologia",
+    "social": "Ciencias Sociais", "art": "Artes e Cultura", "philosophy": "Religiao e Filosofia",
+    "religion": "Religiao e Filosofia", "bibles": "Religiao e Filosofia", "education": "Educacao",
+    "health": "Saude e Medicina", "medical": "Saude e Medicina", "law": "Direito", "business": "Negocios",
+    "economics": "Negocios",
+}
+IDIOMAS = {"pt": "Português", "pt-br": "Português", "por": "Português", "en": "Inglês", "eng": "Inglês",
+           "es": "Espanhol", "spa": "Espanhol", "fr": "Francês", "fre": "Francês", "de": "Alemão", "ger": "Alemão",
+           "it": "Italiano", "ita": "Italiano"}
+TITLE_MATCH_MIN = 0.6  # share of the file name's words that must appear in the API title
+_SOURCE_TAGS = re.compile(r"z-?lib|libgen|library|\.org|ebook|epub|pdf", re.IGNORECASE)
+
+
+def _words(text: str) -> set[str]:
+    folded = "".join(c for c in unicodedata.normalize("NFKD", (text or "").casefold()) if not unicodedata.combining(c))
+    return {w for w in re.findall(r"[a-z0-9]+", folded) if len(w) > 2}
+
+
+def _same_book(query: str, result: dict) -> bool:
+    """Guard against Google Books returning a different book: most title words must match."""
+    query_words = _words(re.sub(r"\([^)]*\)", " ", query))  # authors in parentheses are not title words
+    title_words = _words(f"{result.get('titulo') or ''} {result.get('subtitulo') or ''}")
+    if not query_words or not title_words:
+        return False
+    return len(query_words & title_words) / min(len(query_words), len(title_words)) >= TITLE_MATCH_MIN
+
+
+def _author_from_filename(caminho: str) -> str | None:
+    """'Titulo (Joel Grus) (Z-Library).pdf' -> 'Joel Grus'."""
+    filename = caminho.replace("\\", "/").split("/")[-1]
+    for group in reversed(re.findall(r"\(([^()]{3,80})\)", filename)):
+        group = group.strip()
+        if _SOURCE_TAGS.search(group) or re.search(r"\d", group) or len(group.split()) > 8:
+            continue
+        if any(ch.isalpha() for ch in group):
+            return group
+    return None
+
+
+async def suggest_metadata_free(livro: Livro, pdf_service) -> dict:
+    """Metadata from Google Books / Open Library only (no LLM, no cost); does not save anything."""
+    caminho = livro.caminho or livro.titulo or ""
+    query = extract_search_query(caminho)
+    meta: dict = {"fonte": None}
+
+    best = next((r for r in await search_google_books(query, raise_on_quota=True) if _same_book(query, r)), None)
+    if best:
+        meta["fonte"] = "Google Books"
+    else:
+        best = next((r for r in await search_open_library(query) if _same_book(query, r)), None)
+        if best:
+            meta["fonte"] = "Open Library"
+
+    if best:
+        if best.get("autores"):
+            meta["autor"] = ", ".join(best["autores"])
+        for field in ("editora", "ano", "paginas", "sinopse"):
+            if best.get(field):
+                meta[field] = best[field]
+        idioma = (best.get("idioma") or "").lower()
+        if idioma:
+            meta["idioma"] = IDIOMAS.get(idioma, idioma)
+        categorias = best.get("categorias") or []
+        for cat in categorias:
+            genero = next((v for k, v in GENEROS_MAP.items() if k in cat.lower()), None)
+            if genero:
+                meta["genero"] = genero
+                break
+        meta["tags"] = [c.lower().split("/")[0].strip() for c in categorias[:6]]
+
+    if not meta.get("autor"):
+        meta["autor"] = _author_from_filename(caminho)
+
+    try:
+        paginas = _count_pages_from_file(pdf_service.get_file_path(livro.caminho))
+        if paginas:
+            meta["paginas"] = paginas  # the real file wins over the API's estimate
+    except Exception:
+        pass
+    return meta
+
+
 # ── Preenchimento em lote (admin) ────────────────────────────────────────────
 # Runs in-process in the background; only fills EMPTY fields, never overwrites, never touches titulo.
 
@@ -361,7 +459,7 @@ _FIELD_LIMITS = {"autor": 255, "editora": 255, "idioma": 255, "genero": 255}
 
 _batch = {
     "running": False, "stop": False, "total": 0, "processed": 0, "updated": 0, "failed": 0,
-    "current": None, "started_at": None, "finished_at": None, "errors": [],
+    "current": None, "started_at": None, "finished_at": None, "errors": [], "paused_reason": None,
 }
 _batch_task: asyncio.Task | None = None
 
@@ -402,7 +500,7 @@ def _apply_missing(livro: Livro, meta: dict) -> bool:
 
 
 async def _run_batch(admin_id: int, limit: int | None):
-    _batch.update(running=True, stop=False, processed=0, updated=0, failed=0, errors=[],
+    _batch.update(running=True, stop=False, processed=0, updated=0, failed=0, errors=[], paused_reason=None,
                   started_at=datetime.utcnow().isoformat(), finished_at=None, current=None)
     try:
         with Session(engine) as session:
@@ -419,11 +517,16 @@ async def _run_batch(admin_id: int, limit: int | None):
             try:
                 with Session(engine) as session:
                     livro = session.get(Livro, livro_id)
-                    admin = session.get(Usuario, admin_id)
                     if not livro or livro.autor:
                         continue
                     _batch["current"] = livro.titulo
-                    meta = await suggest_metadata(livro, admin, session, pdf_service)
+                    try:
+                        meta = await suggest_metadata_free(livro, pdf_service)
+                    except GoogleBooksQuotaExceeded:
+                        # Stop instead of filling the rest without Google data; rerun picks up from here.
+                        _batch["paused_reason"] = "Cota diária do Google Books esgotada. Inicie de novo amanhã para continuar."
+                        _batch["stop"] = True
+                        break
                     if _apply_missing(livro, meta):
                         session.add(livro)
                         session.commit()
