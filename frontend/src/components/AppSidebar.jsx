@@ -2,8 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
     Library, PanelLeft, Clock, Bookmark, FolderPlus, BarChart2, ShoppingBag,
-    ClipboardList, Database, Settings, LogOut,
+    ClipboardList, Database, Settings, LogOut, Moon, Sun,
 } from 'lucide-react';
+import { useTheme } from '../utils/useTheme';
 
 const STORAGE_KEY = 'sidebar-collapsed';
 const ROW = 48; // nav row height in px; the sliding indicator moves in steps of this
@@ -15,6 +16,7 @@ const ROW = 48; // nav row height in px; the sliding indicator moves in steps of
 export default function AppSidebar({ userName, isAdmin, pedidosPendentes = 0, adminPendentes = 0, counts = {} }) {
     const navigate = useNavigate();
     const { pathname } = useLocation();
+    const [theme, setTheme] = useTheme();
     const [collapsed, setCollapsed] = useState(() => {
         try { return localStorage.getItem(STORAGE_KEY) === '1'; } catch { return false; }
     });
@@ -151,6 +153,26 @@ export default function AppSidebar({ userName, isAdmin, pedidosPendentes = 0, ad
             </nav>
 
             <hr className="mx-5 border-gray-100" />
+            <button
+                type="button"
+                role="switch"
+                aria-checked={theme === 'dark'}
+                aria-label="Modo escuro"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                onMouseEnter={(e) => showTip(e, 'Modo escuro')}
+                onMouseLeave={hideTip}
+                className="flex items-center gap-4 px-[26px] text-sm font-medium text-gray-400 hover:text-gray-800 transition-colors flex-shrink-0"
+                style={{ height: ROW }}
+            >
+                {theme === 'dark' ? <Sun size={22} className="flex-shrink-0" /> : <Moon size={22} className="flex-shrink-0" />}
+                <span className={`flex-1 text-left ${label}`}>Modo escuro</span>
+                <span
+                    aria-hidden="true"
+                    className={`relative w-11 h-6 rounded-full flex-shrink-0 transition-colors ${theme === 'dark' ? 'bg-blue-600' : 'bg-gray-200'} ${collapsed ? 'hidden' : ''}`}
+                >
+                    <span className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${theme === 'dark' ? 'translate-x-5' : ''}`} />
+                </span>
+            </button>
             <button
                 type="button"
                 onClick={logout}

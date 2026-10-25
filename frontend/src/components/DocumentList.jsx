@@ -10,7 +10,6 @@ import { createPortal } from 'react-dom';
 import api from '../services/api';
 import BookCardSkeleton from './BookCardSkeleton';
 import AppHeader from './AppHeader';
-import MetadataBatchBar from './MetadataBatchBar';
 import BookCard from './BookCard';
 import BookListRow from './BookListRow';
 import FilterPanel from './FilterPanel';
@@ -184,40 +183,58 @@ const DocumentList = () => {
     // FETCH
     // =========================================================
 
+    // Stale-while-revalidate: show the last first page instantly, then refresh it from the API
+    const SNAPSHOT_KEY = `lib_home_snapshot_${userName}`;
+
+    const applyInitial = (docsData, listItems) => {
+        setDocuments(Array.isArray(docsData?.items) ? docsData.items : []);
+        setTotalItems(docsData?.total ?? 0);
+        setHasMore(1 * ITEMS_PER_PAGE < (docsData?.total ?? 0));
+
+        const ids = new Set(), listData = {}, listBooks = [];
+        if (Array.isArray(listItems)) {
+            listItems.forEach(item => {
+                if (item.livro?.id) {
+                    ids.add(item.livro.id);
+                    listData[item.livro.id] = {
+                        status: item.status,
+                        current_page: item.current_page || 1,
+                        total_pages: item.total_pages,
+                    };
+                    listBooks.push(item.livro);
+                }
+            });
+        }
+        setMyListIds(ids); setMyListData(listData); setMyListBooks(listBooks);
+    };
+
     const fetchInitialData = async () => {
+        let snapshot = null;
+        try { snapshot = JSON.parse(localStorage.getItem(SNAPSHOT_KEY) || 'null'); } catch (_) {}
+        if (snapshot) {
+            applyInitial(snapshot.docs, snapshot.list);
+            setLoading(false);
+        }
         try {
-            setLoading(true);
+            if (!snapshot) setLoading(true);
             const [docsRes, listRes] = await Promise.all([
                 api.get('/documents', { params: { page: 1, limit: ITEMS_PER_PAGE } }),
                 api.get('/my-list').catch(() => ({ data: [] })),
             ]);
-            const docsData = docsRes.data;
-            setDocuments(Array.isArray(docsData.items) ? docsData.items : []);
-            setTotalItems(docsData.total ?? 0);
-            setHasMore(1 * ITEMS_PER_PAGE < (docsData.total ?? 0));
-
-            const ids = new Set(), listData = {}, listBooks = [];
-            if (Array.isArray(listRes.data)) {
-                listRes.data.forEach(item => {
-                    if (item.livro?.id) {
-                        ids.add(item.livro.id);
-                        listData[item.livro.id] = {
-                            status: item.status,
-                            current_page: item.current_page || 1,
-                            total_pages: item.total_pages,
-                        };
-                        listBooks.push(item.livro);
-                    }
-                });
-            }
-            setMyListIds(ids); setMyListData(listData); setMyListBooks(listBooks);
+            applyInitial(docsRes.data, listRes.data);
+            try {
+                localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ docs: docsRes.data, list: listRes.data }));
+            } catch (_) {}
         } catch (err) {
             console.error('Erro ao buscar dados iniciais:', err);
         } finally {
             setLoading(false);
         }
+        await fetchFilters();
+    };
 
-        // Fase 2 — filtros em background
+    // Fase 2 — filtros em background
+    const fetchFilters = async () => {
         try {
             const cachedGenres = getLocalCache('lib_genres');
             const cachedTags   = getLocalCache('lib_tags');
@@ -554,8 +571,6 @@ const DocumentList = () => {
                         )}
                     </div>
                 </div>
-
-                {isAdmin && viewMode === 'all' && <MetadataBatchBar />}
 
                 {/* ── FILTROS ── */}
                 <FilterPanel

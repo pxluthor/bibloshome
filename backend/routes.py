@@ -9,6 +9,7 @@ from sqlmodel import Session, select, func
 import re
 import unicodedata
 from sqlalchemy import String, and_, case, cast, or_, func as sa_func
+from sqlalchemy.orm import defer
 from typing import List, Optional
 from datetime import datetime
 from database import get_session
@@ -180,7 +181,7 @@ def list_documents(
     current_user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session)
 ):
-    query = select(Livro)
+    query = select(Livro).options(defer(Livro.capa))  # covers are served by /cover; skip the blob here
     tokens = _search_tokens(search) if search.strip() else []
     if tokens:
         query = query.where(and_(*(_token_filter(alts) for alts in tokens)))
@@ -501,6 +502,7 @@ def listar_recentes(
         .where(LivroAcesso.usuario_id == current_user.id)
         .order_by(LivroAcesso.acessado_em.desc())
         .limit(limit)
+        .options(defer(Livro.capa))
     ).all()
     return [
         {"livro": LivroRead.model_validate(livro), "origem": acesso.origem, "acessado_em": acesso.acessado_em.isoformat()}
@@ -514,7 +516,7 @@ def get_my_list(current_user: Usuario = Depends(get_current_user), session: Sess
     statement = select(ListaLeitura, Livro, Anotacao).join(Livro, ListaLeitura.livro_id == Livro.id).outerjoin(
         Anotacao, 
         (Anotacao.livro_id == Livro.id) & (Anotacao.usuario_id == current_user.id)
-    ).where(ListaLeitura.usuario_id == current_user.id)
+    ).where(ListaLeitura.usuario_id == current_user.id).options(defer(Livro.capa))
     
     results = session.exec(statement).all()
     
@@ -580,7 +582,7 @@ def get_collections(current_user: Usuario = Depends(get_current_user), session: 
     # Buscar todos os livros em uma unica query
     all_book_ids = list({i.livro_id for i in all_items})
     if all_book_ids:
-        livros_rows = session.exec(select(Livro).where(Livro.id.in_(all_book_ids))).all()
+        livros_rows = session.exec(select(Livro).where(Livro.id.in_(all_book_ids)).options(defer(Livro.capa))).all()
     else:
         livros_rows = []
     livro_map = {l.id: l for l in livros_rows}

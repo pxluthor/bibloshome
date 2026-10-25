@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, LogOut, ChevronDown, Bookmark, ShoppingBag, Settings, BookOpen, FileText, Database, BarChart2 } from 'lucide-react';
+import { User, LogOut, ChevronDown, Bookmark, ShoppingBag, Settings, BookOpen, FileText, Database, BarChart2, Moon, Sun } from 'lucide-react';
+import { useTheme } from '../utils/useTheme';
 
 const UserMenu = ({ userName, isAdmin, pedidosPendentes = 0, adminPendentes = 0 }) => {
     const [isOpen, setIsOpen] = useState(false);
+    const [theme, setTheme] = useTheme();
     const menuRef = useRef(null);
     const navigate = useNavigate();
 
@@ -123,6 +125,16 @@ const UserMenu = ({ userName, isAdmin, pedidosPendentes = 0, adminPendentes = 0 
                             Estatísticas
                         </button>
                     </div>
+
+                    <button
+                        role="switch"
+                        aria-checked={theme === 'dark'}
+                        onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition"
+                    >
+                        {theme === 'dark' ? <Sun size={18} className="text-gray-500" /> : <Moon size={18} className="text-gray-500" />}
+                        {theme === 'dark' ? 'Modo claro' : 'Modo escuro'}
+                    </button>
 
                     {/* Divider */}
                     <div className="border-t border-gray-100 my-2"></div>
