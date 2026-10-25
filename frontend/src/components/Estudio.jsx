@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, BookOpen, Bot, Send, Loader2, AlertCircle,
-    CheckCircle, GraduationCap, FileQuestion, Layers, Map,
+    CheckCircle, GraduationCap, FileQuestion, Layers, Map as MapIcon,
     Headphones, Plus, Trash2, Play, Pause, Square, Volume2,
     RefreshCw, Menu, X, ChevronLeft, ChevronRight, RotateCcw,
     ChevronDown, Save, FileText, Lightbulb, HelpCircle, List
@@ -10,6 +10,24 @@ import {
 import api from '../services/api';
 import { toast } from '../utils/toast';
 import ChatMarkdown from './ChatMarkdown';
+
+// Isola falhas de render de um artefato (ex.: JSON fora do formato) para não derrubar a página.
+class ArtifactBoundary extends React.Component {
+    state = { error: null };
+    static getDerivedStateFromError(error) { return { error }; }
+    componentDidCatch(error) { console.error('Falha ao renderizar artefato:', error); }
+    render() {
+        if (this.state.error) {
+            return (
+                <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 rounded-xl p-3 mt-3">
+                    <AlertCircle size={15} />
+                    Não foi possível exibir este artefato ({String(this.state.error.message || this.state.error)}). Tente regerar.
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
 
 // ─── ARTIFACT TYPES ───────────────────────────────────────────────────────────
 const ARTIFACT_TYPES = [
@@ -31,7 +49,7 @@ const ARTIFACT_TYPES = [
         id: 'mindmap',
         label: 'Mapa Mental',
         desc: 'Estrutura hierárquica de tópicos',
-        icon: Map,
+        icon: MapIcon,
         color: 'orange',
     },
     {
@@ -1301,6 +1319,7 @@ const Estudio = () => {
                                             {/* ── Conteúdo expansível ── */}
                                             {isExpanded && (hasResult || hasError) && (
                                                 <div className="px-4 pb-4 border-t border-black/5">
+                                                    <ArtifactBoundary key={`${art.id}-${String(state.result).length}`}>
                                                     {hasError ? (
                                                         <div className="flex items-center gap-2 text-red-600 text-sm bg-red-50 rounded-xl p-3 mt-3">
                                                             <AlertCircle size={15} />
@@ -1347,6 +1366,7 @@ const Estudio = () => {
                                                             <ChatMarkdown content={state.result} />
                                                         </div>
                                                     ) : null}
+                                                    </ArtifactBoundary>
                                                 </div>
                                             )}
                                         </div>
