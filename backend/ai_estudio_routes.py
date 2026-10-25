@@ -186,6 +186,19 @@ def _strip_markdown_code_fences(text: str) -> str:
     return clean.strip()
 
 
+def _parse_json(text: str) -> Any:
+    """Parseia JSON tolerando texto extra antes/depois (comum em modelos como gpt-oss)."""
+    clean = _strip_markdown_code_fences(text)
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        starts = [i for i in (clean.find("["), clean.find("{")) if i != -1]
+        if not starts:
+            raise
+        data, _ = json.JSONDecoder().raw_decode(clean[min(starts):])
+        return data
+
+
 def _extract_pages_text(
     livro: Livro,
     page_ranges: list[dict],
@@ -337,19 +350,22 @@ async def generate_artifact(
         )
 
     resposta = ""
-    async for token in provider.chat(
-        messages=[{"role": "user", "content": user_content}],
-        model=settings.chat_model,
-        system=system,
-        stream=False,
-    ):
-        resposta += token
+    try:
+        async for token in provider.chat(
+            messages=[{"role": "user", "content": user_content}],
+            model=settings.chat_model,
+            system=system,
+            stream=False,
+        ):
+            resposta += token
+    except ValueError as exc:
+        return {"tipo": body.tipo, "content": [], "error": str(exc)}
 
     if body.tipo == "mindmap" or body.tipo in TEXT_PROMPTS:
         return {"tipo": body.tipo, "content": resposta.strip()}
 
     try:
-        data = json.loads(_strip_markdown_code_fences(resposta))
+        data = _parse_json(resposta)
         if body.tipo == "videos":
             queries = [q for q in data if isinstance(q, str) and q.strip()] if isinstance(data, list) else []
             data = await _search_youtube(queries)

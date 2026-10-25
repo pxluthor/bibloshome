@@ -178,7 +178,14 @@ class OpenAIProvider(AIProvider):
             return
 
         resp = await self._client.chat.completions.create(**request_options)
-        yield resp.choices[0].message.content
+        choice = resp.choices[0]
+        if choice.finish_reason == "length":
+            # modelos com raciocinio (ex.: gpt-oss) gastam o limite pensando e cortam a resposta
+            raise ValueError(
+                "Resposta cortada pelo limite de tokens do provedor. "
+                "Aumente 'Max tokens' na conta (ex.: 8192) ou use 'Raciocínio: Baixo'."
+            )
+        yield choice.message.content or ""
 
     async def embed(
         self,
