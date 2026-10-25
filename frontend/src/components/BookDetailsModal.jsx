@@ -1,4 +1,5 @@
 import React from 'react';
+import { cleanTitle } from '../utils/bookTitle';
 import { createPortal } from 'react-dom';
 import { BookOpen, Calendar, Tag, Folder } from 'lucide-react';
 
@@ -24,7 +25,7 @@ export default function BookDetailsModal({ doc, onClose, onRead, apiBaseUrl }) {
                         onError={e => { e.target.style.display = 'none'; }}
                     />
                     <div className="flex-1 min-w-0">
-                        <h2 className="font-bold text-gray-900 text-base leading-tight mb-1">{doc.titulo}</h2>
+                        <h2 className="font-bold text-gray-900 text-base leading-tight mb-1">{cleanTitle(doc.titulo)}</h2>
                         {doc.autor && <p className="text-sm text-gray-600 mb-1">{doc.autor}</p>}
                         <div className="flex flex-wrap gap-1.5 mt-2">
                             {doc.ano && (

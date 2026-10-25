@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { cleanTitle } from '../utils/bookTitle';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { FolderOpen, Trash2, Edit2, Check, X, BookOpen, Loader2 } from 'lucide-react';
@@ -211,7 +212,7 @@ const Collections = () => {
                                                 </button>
                                             </div>
                                             <p className="mt-1.5 text-xs text-gray-700 truncate leading-tight" title={livro.titulo}>
-                                                {livro.titulo}
+                                                {cleanTitle(livro.titulo)}
                                             </p>
                                         </div>
                                     ))}

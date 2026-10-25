@@ -1,4 +1,5 @@
 import React from 'react';
+import { cleanTitle } from '../utils/bookTitle';
 import { useNavigate } from 'react-router-dom';
 import { BookOpen, Plus, Trash2, FolderPlus, Info, Edit, Calendar, Tag, Flag } from 'lucide-react';
 
@@ -48,7 +49,7 @@ export default function BookCard({
 
                 {/* Fallback gradiente */}
                 <div className={`hidden absolute inset-0 bg-gradient-to-br ${getGradient(doc.id)} items-center justify-center p-3 text-center`}>
-                    <h3 className="text-white font-bold text-sm drop-shadow leading-tight">{doc.titulo}</h3>
+                    <h3 className="text-white font-bold text-sm drop-shadow leading-tight">{cleanTitle(doc.titulo)}</h3>
                 </div>
 
                 {/* Overlay de duplicado */}
@@ -62,7 +63,7 @@ export default function BookCard({
 
             {/* Hover overlay */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/55 to-black/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-2.5">
-                    <h3 className="text-white font-bold text-xs leading-tight line-clamp-2 mb-0.5">{doc.titulo}</h3>
+                    <h3 className="text-white font-bold text-xs leading-tight line-clamp-2 mb-0.5">{cleanTitle(doc.titulo)}</h3>
                     <p className="text-gray-300 text-xs mb-1.5 line-clamp-1">{doc.autor || 'Autor Desconhecido'}</p>
 
                     <div className="flex flex-wrap gap-1 mb-2">

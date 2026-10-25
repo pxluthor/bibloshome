@@ -7,7 +7,7 @@ from routes import router
 from admin_bd_routes import router as admin_bd_router
 from ai_routes import router as ai_router
 from ai_estudio_routes import router as ai_estudio_router
-from auto_metadata_routes import router as auto_metadata_router
+from auto_metadata_routes import router as auto_metadata_router, batch_router as metadata_batch_router
 from database import create_db_and_tables
 from oauth.codex_routes import router as codex_oauth_router
 from oauth.claude_routes import router as claude_oauth_router
@@ -48,6 +48,7 @@ app.include_router(admin_bd_router)
 app.include_router(ai_router)
 app.include_router(ai_estudio_router)
 app.include_router(auto_metadata_router)
+app.include_router(metadata_batch_router)
 app.include_router(codex_oauth_router)
 app.include_router(claude_oauth_router)
 

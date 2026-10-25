@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { cleanTitle } from '../utils/bookTitle';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, BookOpen, Bot, Send, Loader2, AlertCircle,
@@ -1017,7 +1018,7 @@ const Estudio = () => {
                 <div className="flex-1 min-w-0">
                     <p className="text-xs text-gray-400 uppercase tracking-wide font-semibold">Estúdio</p>
                     <p className="text-sm font-bold text-gray-800 truncate">
-                        {livro ? livro.titulo : 'Carregando…'}
+                        {livro ? cleanTitle(livro.titulo) : 'Carregando…'}
                     </p>
                 </div>
             </header>

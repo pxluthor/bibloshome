@@ -10,6 +10,7 @@ const tabs = [
     { id: 'mover', label: 'Mover Livro' },
     { id: 'duplicados', label: 'Duplicados' },
     { id: 'usuarios', label: 'Usuários' },
+    { id: 'metadados', label: 'Metadados' },
 ];
 
 const getErrorMessage = (err) => (
@@ -174,6 +175,91 @@ const MetricCard = ({ label, value }) => (
         <div className="mt-1 text-sm text-gray-500">{label}</div>
     </div>
 );
+
+// Batch fill of empty metadata (author, genre, tags…) via /admin/metadata-batch
+const MetadadosTab = () => {
+    const [status, setStatus] = useState(null);
+    const [limit, setLimit] = useState('');
+    const [error, setError] = useState('');
+
+    const refresh = () => api.get('/admin/metadata-batch/status')
+        .then((r) => setStatus(r.data))
+        .catch((e) => setError(getErrorMessage(e)));
+
+    useEffect(() => {
+        refresh();
+        const timer = setInterval(refresh, 4000);
+        return () => clearInterval(timer);
+    }, []);
+
+    const start = async () => {
+        setError('');
+        try {
+            await api.post('/admin/metadata-batch/start', null, { params: limit ? { limit: Number(limit) } : {} });
+            refresh();
+        } catch (e) { setError(e.response?.data?.detail || getErrorMessage(e)); }
+    };
+    const stop = () => api.post('/admin/metadata-batch/stop').then(refresh).catch((e) => setError(getErrorMessage(e)));
+
+    const pct = status?.total ? Math.round((status.processed / status.total) * 100) : 0;
+
+    return (
+        <div className="space-y-4">
+            <ErrorAlert message={error} />
+            <div className="rounded-xl border bg-white p-5 space-y-4">
+                <div>
+                    <h2 className="font-semibold text-gray-900">Preencher metadados do acervo</h2>
+                    <p className="text-sm text-gray-500 mt-1">
+                        Para cada livro sem autor, busca no Google Books / Open Library e usa a IA configurada para
+                        sugerir autor, editora, ano, idioma, gênero, tags e sinopse. Só preenche campos vazios — nunca
+                        sobrescreve dados nem altera o título. Roda em segundo plano (~2 s por livro).
+                    </p>
+                </div>
+
+                {status?.running ? (
+                    <div className="space-y-2">
+                        <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                            <div className="h-full bg-purple-600 transition-all" style={{ width: `${pct}%` }} />
+                        </div>
+                        <p className="text-sm text-gray-700">
+                            {status.processed} de {status.total} ({pct}%) · {status.updated} atualizados · {status.failed} falhas
+                        </p>
+                        {status.current && <p className="text-xs text-gray-400 truncate">Agora: {status.current}</p>}
+                        <button onClick={stop} className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50">
+                            Parar
+                        </button>
+                    </div>
+                ) : (
+                    <div className="flex flex-wrap items-end gap-3">
+                        <label className="text-sm text-gray-700">
+                            Limite (opcional, para testar)
+                            <input
+                                type="number" min="1" value={limit} onChange={(e) => setLimit(e.target.value)}
+                                placeholder="todos"
+                                className="mt-1 block w-32 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                            />
+                        </label>
+                        <button onClick={start} className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700">
+                            Iniciar
+                        </button>
+                    </div>
+                )}
+
+                {status?.finished_at && !status.running && (
+                    <p className="text-sm text-gray-600">
+                        Último lote: {status.processed} processados · {status.updated} atualizados · {status.failed} falhas
+                    </p>
+                )}
+                {status?.errors?.length > 0 && (
+                    <details className="text-xs text-gray-500">
+                        <summary className="cursor-pointer">Últimos erros ({status.errors.length})</summary>
+                        <ul className="mt-1 space-y-0.5">{status.errors.map((e, i) => <li key={i} className="break-all">{e}</li>)}</ul>
+                    </details>
+                )}
+            </div>
+        </div>
+    );
+};
 
 const AdminBd = () => {
     const navigate = useNavigate();
@@ -876,6 +962,7 @@ const AdminBd = () => {
                 {activeTab === 'mover' && renderMover()}
                 {activeTab === 'duplicados' && <DuplicadosTab />}
                 {activeTab === 'usuarios' && <UsuariosTab />}
+                {activeTab === 'metadados' && <MetadadosTab />}
             </main>
         </div>
     );

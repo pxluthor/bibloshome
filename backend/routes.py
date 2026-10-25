@@ -6,7 +6,9 @@ from slowapi.util import get_remote_address
 limiter = Limiter(key_func=get_remote_address)
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select, func
-from sqlalchemy import or_, func as sa_func
+import re
+import unicodedata
+from sqlalchemy import String, and_, case, cast, or_, func as sa_func
 from typing import List, Optional
 from datetime import datetime
 from database import get_session
@@ -73,6 +75,100 @@ def list_folders(current_user: Usuario = Depends(get_current_user), session: Ses
     result.extend(sorted(entries, key=lambda x: x["rel"].lower()))
     return result
 
+# ── Busca do acervo ──────────────────────────────────────────────────────────
+# Collation utf8mb4_unicode_ci already ignores case and accents in LIKE comparisons.
+
+# Phrases/words searched as equivalents (accent-free, lowercase). Longer phrases are matched first.
+SEARCH_SYNONYMS = [
+    ["aprendizado de maquina", "machine learning"],
+    ["aprendizado profundo", "deep learning"],
+    ["ciencia de dados", "data science"],
+    ["inteligencia artificial", "artificial intelligence"],
+    ["redes neurais", "neural networks", "neural network"],
+    ["processamento de linguagem natural", "natural language processing", "nlp"],
+    ["visao computacional", "computer vision"],
+    ["banco de dados", "database", "databases"],
+    ["engenharia de software", "software engineering"],
+    ["estrutura de dados", "estruturas de dados", "data structures"],
+    ["algebra linear", "linear algebra"],
+    ["expressoes regulares", "expressao regular", "regular expressions", "regex"],
+    ["dados", "data"],
+    ["programacao", "programming"],
+    ["algoritmos", "algoritmo", "algorithms"],
+    ["calculo", "calculus"],
+    ["estatistica", "statistics"],
+    ["probabilidade", "probability"],
+    ["matematica", "mathematics", "math"],
+    ["fisica", "physics"],
+    ["quimica", "chemistry"],
+    ["astronomia", "astronomy"],
+    ["historia", "history"],
+    ["filosofia", "philosophy"],
+    ["teologia", "theology"],
+    ["biblia", "bible"],
+    ["economia", "economics"],
+    ["seguranca", "security"],
+    ["redes de computadores", "computer networks"],
+]
+SEARCH_STOPWORDS = {"de", "da", "do", "das", "dos", "e", "a", "o", "as", "os", "em", "para", "com", "por", "um", "uma",
+                    "the", "of", "and", "in", "for", "to", "on", "with"}
+_SYNONYM_PHRASES = sorted(
+    ((phrase, group) for group in SEARCH_SYNONYMS for phrase in group), key=lambda p: -len(p[0])
+)
+
+
+def _fold_search(text: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", text.casefold()) if not unicodedata.combining(c))
+
+
+def _search_tokens(search: str) -> list[list[str]]:
+    """Each token is a list of alternatives; every token must match (AND), any alternative may (OR)."""
+    text = " " + re.sub(r"\s+", " ", _fold_search(search)).strip() + " "
+    tokens: list[list[str]] = []
+    for phrase, group in _SYNONYM_PHRASES:
+        if f" {phrase} " in text:
+            tokens.append(list(group))
+            text = text.replace(f" {phrase} ", " ")
+    for word in text.split():
+        word = word.strip(".,;:!?\"'()")
+        if word and word not in SEARCH_STOPWORDS:
+            tokens.append([word])
+    return tokens[:8]
+
+
+def _like(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _match(column, alt: str):
+    # Very short terms ("ia", "c", "r") would match inside any word: require word boundaries.
+    if len(alt) <= 2:
+        return sa_func.regexp_like(column, f"\\b{re.escape(alt)}\\b", "i")
+    return column.like(_like(alt), escape="\\")
+
+
+_SEARCH_FIELDS = (Livro.titulo, Livro.autor, Livro.area, cast(Livro.tags, String))
+
+
+def _token_filter(alts: list[str]):
+    return or_(*(_match(field, alt) for alt in alts for field in _SEARCH_FIELDS))
+
+
+def _relevance(search: str, tokens: list[list[str]]):
+    """Integer score used only for ordering."""
+    full = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    score = (
+        case((Livro.titulo.like(f"{full}%", escape="\\"), 100), else_=0)
+        + case((Livro.titulo.like(f"%{full}%", escape="\\"), 60), else_=0)
+    )
+    for alts in tokens:
+        score = score + case((or_(*(_match(Livro.titulo, a) for a in alts)), 10), else_=0)
+        score = score + case((or_(*(_match(Livro.autor, a) for a in alts)), 8), else_=0)
+        score = score + case((or_(*(_match(Livro.area, a) for a in alts)), 3), else_=0)
+    return score
+
+
 @router.get("/documents")
 def list_documents(
     page: int = Query(1, ge=1),
@@ -85,10 +181,9 @@ def list_documents(
     session: Session = Depends(get_session)
 ):
     query = select(Livro)
-    if search:
-        query = query.where(
-            or_(Livro.titulo.ilike(f"%{search}%"), Livro.autor.ilike(f"%{search}%"))
-        )
+    tokens = _search_tokens(search) if search.strip() else []
+    if tokens:
+        query = query.where(and_(*(_token_filter(alts) for alts in tokens)))
     if genre:
         query = query.where(Livro.genero == genre)
     if tag:
@@ -99,15 +194,17 @@ def list_documents(
         )
 
     # Ordenação: sem busca → livros mais completos primeiro (capa + autor + genero)
-    #            com busca → ordem padrão (relevância do MySQL)
-    if not search:
+    #            com busca → relevância (frase no título > palavras no título > autor > pasta/tags)
+    total = session.exec(select(func.count()).select_from(query.subquery())).one()
+    if tokens:
+        query = query.order_by(_relevance(search.strip(), tokens).desc(), (Livro.capa != None).desc(), Livro.id)
+    else:
         query = query.order_by(
             (Livro.capa != None).desc(),
             (Livro.autor != None).desc(),
             (Livro.genero != None).desc(),
         )
 
-    total = session.exec(select(func.count()).select_from(query.subquery())).one()
     items = session.exec(query.offset((page - 1) * limit).limit(limit)).all()
 
     return {"items": [LivroRead.model_validate(i) for i in items], "total": total, "page": page, "limit": limit}

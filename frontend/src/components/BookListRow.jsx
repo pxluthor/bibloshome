@@ -1,4 +1,5 @@
 import React from 'react';
+import { cleanTitle } from '../utils/bookTitle';
 import { useNavigate } from 'react-router-dom';
 import { BookOpen, Plus, Trash2, FolderPlus, Edit, Flag } from 'lucide-react';
 
@@ -62,7 +63,7 @@ export default function BookListRow({
             {/* Informações */}
             <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-gray-900 text-sm sm:text-base truncate">{doc.titulo}</h3>
+                    <h3 className="font-bold text-gray-900 text-sm sm:text-base truncate">{cleanTitle(doc.titulo)}</h3>
                     {doc.is_duplicate && (
                         <span className="flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 uppercase">
                             Duplicado

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
+import { cleanTitle } from '../utils/bookTitle';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
     Search, Library, ChevronLeft, ChevronRight,
@@ -624,7 +625,7 @@ const DocumentList = () => {
                                                     className="absolute top-1.5 right-1.5 h-6 w-6 rounded-full bg-red-600 text-white items-center justify-center hidden group-hover/book:flex transition shadow"
                                                     title="Remover da coleção"><X size={12}/></button>
                                             </div>
-                                            <p className="mt-1 text-xs text-gray-700 truncate">{livro.titulo}</p>
+                                            <p className="mt-1 text-xs text-gray-700 truncate">{cleanTitle(livro.titulo)}</p>
                                         </div>
                                     ))}
                                 </div>

@@ -1,16 +1,22 @@
+import asyncio
 import json
+import logging
 import re
+from datetime import datetime
 
 import httpx
 from bs4 import BeautifulSoup
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from ai_routes import _get_user_settings, build_provider
 from auth import get_current_user
-from database import get_session
+from database import engine, get_session
 from models import Livro, Usuario, UsuarioAISettings
 from services import get_pdf_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["Auto Metadata"])
 
@@ -177,7 +183,11 @@ async def auto_fill_metadata(
     livro = session.get(Livro, doc_id)
     if not livro:
         raise HTTPException(status_code=404, detail="Livro nao encontrado")
+    return await suggest_metadata(livro, current_user, session, pdf_service)
 
+
+async def suggest_metadata(livro: Livro, current_user: Usuario, session: Session, pdf_service) -> dict:
+    """Suggested metadata for a book (APIs + LLM); does not save anything."""
     settings = await _get_user_settings(current_user.id, session)
 
     if settings.provider == "openai" and not settings.openai_api_key:
@@ -339,3 +349,118 @@ async def auto_fill_metadata(
         "fonte": fonte,
         "_debug": debug_results,
     }
+
+
+# ── Preenchimento em lote (admin) ────────────────────────────────────────────
+# Runs in-process in the background; only fills EMPTY fields, never overwrites, never touches titulo.
+
+batch_router = APIRouter(prefix="/admin/metadata-batch", tags=["Auto Metadata"])
+
+BATCH_DELAY_SECONDS = 2.0  # be gentle with Google Books / Open Library / the LLM provider
+_FIELD_LIMITS = {"autor": 255, "editora": 255, "idioma": 255, "genero": 255}
+
+_batch = {
+    "running": False, "stop": False, "total": 0, "processed": 0, "updated": 0, "failed": 0,
+    "current": None, "started_at": None, "finished_at": None, "errors": [],
+}
+_batch_task: asyncio.Task | None = None
+
+
+def _require_admin(user: Usuario):
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Apenas administradores")
+
+
+def _apply_missing(livro: Livro, meta: dict) -> bool:
+    """Copy suggested values into empty fields only. Returns True if anything changed."""
+    changed = False
+    for field, limit in _FIELD_LIMITS.items():
+        value = meta.get(field)
+        if not getattr(livro, field) and isinstance(value, str) and value.strip() and value.strip().lower() != "null":
+            setattr(livro, field, value.strip()[:limit])
+            changed = True
+    sinopse = meta.get("sinopse")
+    if not livro.sinopse and isinstance(sinopse, str) and len(sinopse.strip()) > 20:
+        livro.sinopse = sinopse.strip()[:2000]
+        changed = True
+    for field in ("ano", "paginas"):
+        try:
+            value = int(meta.get(field)) if meta.get(field) is not None else None
+        except (TypeError, ValueError):
+            value = None
+        valid = value and (1400 <= value <= 2100 if field == "ano" else 0 < value < 20000)
+        if not getattr(livro, field) and valid:
+            setattr(livro, field, value)
+            changed = True
+    tags = meta.get("tags")
+    if not livro.tags and isinstance(tags, list):
+        clean = [t.strip().lower()[:40] for t in tags if isinstance(t, str) and t.strip()][:6]
+        if clean:
+            livro.tags = clean
+            changed = True
+    return changed
+
+
+async def _run_batch(admin_id: int, limit: int | None):
+    _batch.update(running=True, stop=False, processed=0, updated=0, failed=0, errors=[],
+                  started_at=datetime.utcnow().isoformat(), finished_at=None, current=None)
+    try:
+        with Session(engine) as session:
+            stmt = select(Livro.id).where(or_(Livro.autor == None, Livro.autor == "")).order_by(Livro.id)  # noqa: E711
+            ids = list(session.exec(stmt).all())
+        if limit:
+            ids = ids[:limit]
+        _batch["total"] = len(ids)
+        pdf_service = get_pdf_service()
+
+        for livro_id in ids:
+            if _batch["stop"]:
+                break
+            try:
+                with Session(engine) as session:
+                    livro = session.get(Livro, livro_id)
+                    admin = session.get(Usuario, admin_id)
+                    if not livro or livro.autor:
+                        continue
+                    _batch["current"] = livro.titulo
+                    meta = await suggest_metadata(livro, admin, session, pdf_service)
+                    if _apply_missing(livro, meta):
+                        session.add(livro)
+                        session.commit()
+                        _batch["updated"] += 1
+            except Exception as exc:  # one bad book must not stop the batch
+                _batch["failed"] += 1
+                _batch["errors"] = (_batch["errors"] + [f"{livro_id}: {exc}"])[-10:]
+                logger.warning("Metadados em lote falharam para o livro %s: %s", livro_id, exc)
+            finally:
+                _batch["processed"] += 1
+            await asyncio.sleep(BATCH_DELAY_SECONDS)
+    finally:
+        _batch.update(running=False, current=None, finished_at=datetime.utcnow().isoformat())
+
+
+@batch_router.post("/start")
+async def start_metadata_batch(
+    limit: int | None = Query(default=None, ge=1, le=5000),
+    current_user: Usuario = Depends(get_current_user),
+):
+    """Start filling metadata for books without author. `limit` processes only the first N (useful to test)."""
+    global _batch_task
+    _require_admin(current_user)
+    if _batch["running"]:
+        raise HTTPException(status_code=409, detail="Já existe um lote em andamento")
+    _batch_task = asyncio.create_task(_run_batch(current_user.id, limit))
+    return {"status": "started"}
+
+
+@batch_router.post("/stop")
+async def stop_metadata_batch(current_user: Usuario = Depends(get_current_user)):
+    _require_admin(current_user)
+    _batch["stop"] = True
+    return {"status": "stopping"}
+
+
+@batch_router.get("/status")
+async def metadata_batch_status(current_user: Usuario = Depends(get_current_user)):
+    _require_admin(current_user)
+    return {k: v for k, v in _batch.items() if k != "stop"}
