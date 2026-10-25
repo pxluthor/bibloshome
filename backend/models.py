@@ -81,6 +81,17 @@ class ListaLeitura(SQLModel, table=True):
 class ListaLeituraUpdate(SQLModel):
     status: str
 
+# --- RECENTES (último acesso por livro) ---
+class LivroAcesso(SQLModel, table=True):
+    __tablename__ = "livros_acessos"
+    __table_args__ = (UniqueConstraint("usuario_id", "livro_id", name="uq_livro_acesso"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    livro_id: int = Field(foreign_key="livros.id")
+    origem: str = Field(default="leitor", max_length=20)  # leitor | epub | estudio
+    acessado_em: datetime = Field(default_factory=utcnow, index=True)
+
 class ColecaoLivro(SQLModel, table=True):
     __tablename__ = "colecoes_livros"
 
@@ -189,11 +200,15 @@ class LivroIAStatus(SQLModel, table=True):
 # --- PEDIDOS DE LIVROS ---
 class EstudioArtefato(SQLModel, table=True):
     __tablename__ = "estudio_artefatos"
-    __table_args__ = (UniqueConstraint("usuario_id", "livro_id", "tipo", name="uq_estudio_artefato"),)
+    __table_args__ = (
+        UniqueConstraint("usuario_id", "livro_id", "tipo", "escopo", name="uq_estudio_artefato_escopo"),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     usuario_id: int = Field(foreign_key="usuario.id", index=True)
     livro_id: int = Field(foreign_key="livros.id", index=True)
+    # Selected page ranges, e.g. "18-25,30-49"; "" = whole book (legacy rows)
+    escopo: str = Field(default="", max_length=255)
     tipo: str  # quiz | flashcards | mindmap | audio_resumo | resumo | insights | reflexao | sumario | videos | podcast | video
     conteudo: Dict[str, Any] = Field(default={}, sa_column=Column(JSON))
     saved_at: datetime = Field(default_factory=utcnow)

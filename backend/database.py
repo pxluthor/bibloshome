@@ -31,6 +31,30 @@ engine = create_engine(
 def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
     _ensure_ai_provider_account_columns()
+    _ensure_estudio_artefato_escopo()
+
+
+def _ensure_estudio_artefato_escopo():
+    """Artefatos passam a ser únicos por (usuário, livro, tipo, escopo de páginas)."""
+    table_name = "estudio_artefatos"
+    inspector = inspect(engine)
+    if table_name not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns(table_name)}
+    uniques = {u["name"] for u in inspector.get_unique_constraints(table_name)}
+    with engine.begin() as connection:
+        if "escopo" not in columns:
+            connection.execute(text(
+                f"ALTER TABLE {table_name} ADD COLUMN escopo VARCHAR(255) NOT NULL DEFAULT ''"
+            ))
+        if "uq_estudio_artefato" in uniques:
+            connection.execute(text(f"ALTER TABLE {table_name} DROP INDEX uq_estudio_artefato"))
+        if "uq_estudio_artefato_escopo" not in uniques:
+            connection.execute(text(
+                f"ALTER TABLE {table_name} ADD CONSTRAINT uq_estudio_artefato_escopo "
+                "UNIQUE (usuario_id, livro_id, tipo, escopo)"
+            ))
 
 
 def _ensure_ai_provider_account_columns():

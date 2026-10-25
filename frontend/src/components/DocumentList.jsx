@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
     Search, Library, ChevronLeft, ChevronRight,
     Filter, ChevronDown, LayoutGrid, List, Bookmark,
-    FolderPlus, BookOpen, Edit2, Trash2, Check, X,
+    FolderPlus, BookOpen, Edit2, Trash2, Check, X, Clock,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import api from '../services/api';
@@ -46,6 +46,7 @@ const DocumentList = () => {
     const [myListIds, setMyListIds] = useState(new Set());
     const [myListData, setMyListData] = useState({});
     const [myListBooks, setMyListBooks] = useState([]);
+    const [recentBooks, setRecentBooks] = useState([]);
     const [collections, setCollections] = useState([]);
     const [availableGenres, setAvailableGenres] = useState([]);
     const [availableTags, setAvailableTags] = useState([]);
@@ -56,9 +57,13 @@ const DocumentList = () => {
     const location = useLocation();
     const viewMode = location.pathname.startsWith('/meus-livros')
         ? 'my_list'
-        : location.pathname.startsWith('/colecoes')
-            ? 'collections'
-            : 'all';
+        : location.pathname.startsWith('/recentes')
+            ? 'recent'
+            : location.pathname.startsWith('/colecoes')
+                ? 'collections'
+                : 'all';
+    // Client-side paginated tabs share the same filter/search/pagination
+    const isClientList = viewMode === 'my_list' || viewMode === 'recent';
     const [selectedCollectionId, setSelectedCollectionId] = useState(null);
     const [viewLayout, setViewLayout] = useState('grid');
     const [searchTerm, setSearchTerm] = useState('');
@@ -141,6 +146,16 @@ const DocumentList = () => {
 
     // Resetar página ao trocar aba
     useEffect(() => { setCurrentPage(1); }, [viewMode]);
+
+    // Recentes: recarrega sempre que a aba é aberta (o usuário acabou de sair de um livro)
+    useEffect(() => {
+        if (viewMode !== 'recent') return;
+        setListLoading(true);
+        api.get('/recentes', { params: { limit: 60 } })
+            .then(res => setRecentBooks(Array.isArray(res.data) ? res.data.map(r => r.livro) : []))
+            .catch(() => setRecentBooks([]))
+            .finally(() => setListLoading(false));
+    }, [viewMode]);
 
     // Seleciona primeira coleção automaticamente ao entrar na aba
     useEffect(() => {
@@ -312,7 +327,7 @@ const DocumentList = () => {
     };
 
     const handleRead = (docId) => {
-        const doc = [...documents, ...myListBooks].find(d => d.id === docId);
+        const doc = [...documents, ...myListBooks, ...recentBooks].find(d => d.id === docId);
         if (doc?.caminho?.toLowerCase().endsWith('.epub')) {
             navigate(`/epub/${docId}`);
             return;
@@ -408,7 +423,7 @@ const DocumentList = () => {
     // =========================================================
 
     const myListFiltered = useMemo(() => {
-        let data = myListBooks;
+        let data = viewMode === 'recent' ? recentBooks : myListBooks;
         if (selectedGenre) data = data.filter(d => d.genero === selectedGenre);
         if (selectedTag)   data = data.filter(d => Array.isArray(d.tags) && d.tags.includes(selectedTag));
         if (searchTerm.trim()) {
@@ -419,7 +434,7 @@ const DocumentList = () => {
             );
         }
         return data;
-    }, [myListBooks, selectedGenre, selectedTag, searchTerm]);
+    }, [viewMode, recentBooks, myListBooks, selectedGenre, selectedTag, searchTerm]);
 
     const myListTotalPages  = Math.ceil(myListFiltered.length / ITEMS_PER_PAGE);
     const myListCurrentItems = useMemo(() => {
@@ -427,9 +442,9 @@ const DocumentList = () => {
         return myListFiltered.slice(start, start + ITEMS_PER_PAGE);
     }, [myListFiltered, currentPage]);
 
-    const currentItems  = viewMode === 'my_list' ? myListCurrentItems : documents;
-    const totalPages    = viewMode === 'my_list' ? myListTotalPages   : Math.ceil(totalItems / ITEMS_PER_PAGE);
-    const displayTotal  = viewMode === 'my_list' ? myListFiltered.length : totalItems;
+    const currentItems  = isClientList ? myListCurrentItems : documents;
+    const totalPages    = isClientList ? myListTotalPages   : Math.ceil(totalItems / ITEMS_PER_PAGE);
+    const displayTotal  = isClientList ? myListFiltered.length : totalItems;
     const apiBaseUrl    = api.defaults.baseURL;
 
     // =========================================================
@@ -458,6 +473,14 @@ const DocumentList = () => {
                             >
                                 <Library size={15} className="flex-shrink-0" />
                                 <span className="hidden sm:inline">Acervo Completo</span>
+                            </button>
+                            <button
+                                onClick={() => navigate('/recentes')}
+                                className={`flex-1 flex items-center justify-center gap-1.5 px-2 sm:px-5 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${viewMode === 'recent' ? 'bg-blue-100 text-blue-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}
+                                title="Recentes"
+                            >
+                                <Clock size={15} className="flex-shrink-0" />
+                                <span className="hidden sm:inline">Recentes</span>
                             </button>
                             <button
                                 onClick={() => navigate('/meus-livros')}
@@ -621,7 +644,7 @@ const DocumentList = () => {
                             <span className="text-sm text-gray-500">
                                 Mostrando {currentItems.length} de {displayTotal} livros encontrados
                             </span>
-                            {viewMode === 'my_list' && searchTerm && displayTotal === 0 && (
+                            {isClientList && searchTerm && displayTotal === 0 && (
                                 <button onClick={() => navigate('/acervo')} className="text-sm text-blue-600 hover:text-blue-700 font-medium underline underline-offset-2">
                                     Buscar no Acervo Completo →
                                 </button>
@@ -684,7 +707,7 @@ const DocumentList = () => {
                         )}
 
                         {/* Paginação client-side — Meus Livros */}
-                        {viewMode === 'my_list' && displayTotal > ITEMS_PER_PAGE && (
+                        {isClientList && displayTotal > ITEMS_PER_PAGE && (
                             <div className="mt-10 flex justify-center items-center gap-4">
                                 <button onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} disabled={currentPage === 1} className="p-2 rounded-lg border border-gray-300 disabled:opacity-30 hover:bg-white transition shadow-sm"><ChevronLeft size={20} /></button>
                                 <div className="bg-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm">

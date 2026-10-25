@@ -316,6 +316,33 @@ class ArtifactRequest(BaseModel):
     page_ranges: list[dict] = Field(default_factory=list)
 
 
+def _escopo(page_ranges: list[dict]) -> str:
+    """Canonical key for a chapter selection; the frontend builds the same string."""
+    parts = sorted(
+        f"{int(r['start'])}-{int(r['end'])}" for r in page_ranges if "start" in r and "end" in r
+    )
+    return ",".join(parts)[:255]
+
+
+def _persist_artifact(session: Session, usuario_id: int, livro_id: int, tipo: str, escopo: str, conteudo: Any) -> str:
+    """Upsert the generated artifact; returns saved_at as ISO string."""
+    row = session.exec(
+        select(EstudioArtefato)
+        .where(EstudioArtefato.usuario_id == usuario_id)
+        .where(EstudioArtefato.livro_id == livro_id)
+        .where(EstudioArtefato.tipo == tipo)
+        .where(EstudioArtefato.escopo == escopo)
+    ).first()
+    if row:
+        row.conteudo = conteudo
+        row.saved_at = utcnow()
+    else:
+        row = EstudioArtefato(usuario_id=usuario_id, livro_id=livro_id, tipo=tipo, escopo=escopo, conteudo=conteudo)
+        session.add(row)
+    session.commit()
+    return row.saved_at.isoformat()
+
+
 @router.post("/estudio/{livro_id}/artifact")
 async def generate_artifact(
     livro_id: int,
@@ -342,9 +369,12 @@ async def generate_artifact(
     titulo = livro.titulo or "Desconhecido"
     user_content = f"Livro: {titulo}\n\nConteudo:\n{texto}"
     system = SYSTEM_PROMPTS[body.tipo]
+    escopo = _escopo(body.page_ranges)
+    usuario_id = current_user.id
 
     if body.tipo == "audio_resumo":
         async def generate():
+            texto_gerado = ""
             try:
                 async for token in provider.chat(
                     messages=[{"role": "user", "content": user_content}],
@@ -352,7 +382,15 @@ async def generate_artifact(
                     system=system,
                     stream=True,
                 ):
+                    texto_gerado += token
                     yield f"data: {json.dumps({'token': token})}\n\n"
+                if texto_gerado.strip():
+                    # The request session is closed once streaming starts; open a fresh one.
+                    with Session(engine) as stream_session:
+                        saved_at = _persist_artifact(
+                            stream_session, usuario_id, livro_id, body.tipo, escopo, texto_gerado.strip()
+                        )
+                    yield f"data: {json.dumps({'saved_at': saved_at})}\n\n"
             except Exception as exc:
                 yield f"data: {json.dumps({'error': str(exc)})}\n\n"
             finally:
@@ -380,14 +418,19 @@ async def generate_artifact(
             break
 
     if body.tipo == "mindmap" or body.tipo in TEXT_PROMPTS:
-        return {"tipo": body.tipo, "content": resposta.strip()}
+        content = resposta.strip()
+        if not content:
+            return {"tipo": body.tipo, "content": "", "error": "O modelo devolveu uma resposta vazia"}
+        saved_at = _persist_artifact(session, usuario_id, livro_id, body.tipo, escopo, content)
+        return {"tipo": body.tipo, "content": content, "escopo": escopo, "saved_at": saved_at}
 
     try:
         data = _parse_json(resposta)
         if body.tipo == "videos":
             queries = [q for q in data if isinstance(q, str) and q.strip()] if isinstance(data, list) else []
             data = await _search_youtube(queries)
-        return {"tipo": body.tipo, "content": data}
+        saved_at = _persist_artifact(session, usuario_id, livro_id, body.tipo, escopo, data)
+        return {"tipo": body.tipo, "content": data, "escopo": escopo, "saved_at": saved_at}
     except json.JSONDecodeError:
         return {
             "tipo": body.tipo,
@@ -415,7 +458,7 @@ async def list_saved_artifacts(
         .where(EstudioArtefato.usuario_id == current_user.id)
     ).all()
     return [
-        {"tipo": r.tipo, "conteudo": r.conteudo, "saved_at": r.saved_at.isoformat()}
+        {"tipo": r.tipo, "escopo": r.escopo, "conteudo": r.conteudo, "saved_at": r.saved_at.isoformat()}
         for r in rows
     ]
 
@@ -425,38 +468,22 @@ async def save_artifact(
     livro_id: int,
     tipo: str,
     body: SaveArtifactRequest,
+    escopo: str = "",
     current_user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
     if tipo not in VALID_TIPOS:
         raise HTTPException(status_code=400, detail=f"tipo inv\u00e1lido: {tipo}")
 
-    row = session.exec(
-        select(EstudioArtefato)
-        .where(EstudioArtefato.livro_id == livro_id)
-        .where(EstudioArtefato.usuario_id == current_user.id)
-        .where(EstudioArtefato.tipo == tipo)
-    ).first()
-
-    if row:
-        row.conteudo = body.conteudo
-        row.saved_at = utcnow()
-    else:
-        row = EstudioArtefato(
-            usuario_id=current_user.id,
-            livro_id=livro_id,
-            tipo=tipo,
-            conteudo=body.conteudo,
-        )
-        session.add(row)
-    session.commit()
-    return {"status": "saved", "tipo": tipo, "saved_at": row.saved_at.isoformat()}
+    saved_at = _persist_artifact(session, current_user.id, livro_id, tipo, escopo[:255], body.conteudo)
+    return {"status": "saved", "tipo": tipo, "escopo": escopo, "saved_at": saved_at}
 
 
 @router.delete("/estudio/{livro_id}/artifacts/{tipo}")
 async def delete_artifact(
     livro_id: int,
     tipo: str,
+    escopo: str = "",
     current_user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
@@ -465,6 +492,7 @@ async def delete_artifact(
         .where(EstudioArtefato.livro_id == livro_id)
         .where(EstudioArtefato.usuario_id == current_user.id)
         .where(EstudioArtefato.tipo == tipo)
+        .where(EstudioArtefato.escopo == escopo)
     ).first()
     if row:
         session.delete(row)

@@ -677,12 +677,11 @@ const Estudio = () => {
     const [chatLoading, setChatLoading] = useState(false);
     const bottomRef = useRef(null);
 
-    // Artifact state: { tipo: { loading, result, error } }
+    // Artifact state for the current chapter selection: { tipo: { loading, result, error, pending, escopo } }
     const [artifacts, setArtifacts] = useState({});
     const [expandedArtifacts, setExpandedArtifacts] = useState(new Set());
-    // { tipo: { saved_at: "ISO" } }
-    const [savedInfo, setSavedInfo] = useState({});
-    const [savingArtifact, setSavingArtifact] = useState(new Set());
+    // Everything persisted for this book, auto-saved on generation: { escopo: { tipo: { result, saved_at } } }
+    const [savedAll, setSavedAll] = useState({});
 
     const toggleArtifact = (id) =>
         setExpandedArtifacts((prev) => {
@@ -695,40 +694,27 @@ const Estudio = () => {
     useEffect(() => {
         api.get(`/ai/estudio/${livroId}/artifacts`)
             .then((r) => {
-                if (!r.data.length) return;
-                const info = {};
-                const restored = {};
-                r.data.forEach(({ tipo, conteudo, saved_at }) => {
-                    info[tipo] = { saved_at };
-                    restored[tipo] = { result: conteudo, loading: false, error: null };
+                const all = {};
+                r.data.forEach(({ tipo, escopo = '', conteudo, saved_at }) => {
+                    (all[escopo] ||= {})[tipo] = { result: conteudo, saved_at };
                 });
-                setSavedInfo(info);
-                setArtifacts(restored);
-                setExpandedArtifacts(new Set(Object.keys(restored)));
+                setSavedAll(all);
             })
             .catch(() => {});
     }, [livroId]);
 
-    const handleSaveArtifact = async (tipo) => {
-        const state = artifacts[tipo];
-        if (!state?.result) return;
-        setSavingArtifact((p) => new Set([...p, tipo]));
-        try {
-            const { data } = await api.post(`/ai/estudio/${livroId}/artifacts/${tipo}`, {
-                conteudo: state.result,
-            });
-            setSavedInfo((p) => ({ ...p, [tipo]: { saved_at: data.saved_at } }));
-        } catch {
-            toast.error('Erro ao salvar artefato.');
-        } finally {
-            setSavingArtifact((p) => { const n = new Set(p); n.delete(tipo); return n; });
-        }
-    };
+    const rememberSaved = (escopoKey, tipo, result, saved_at) =>
+        setSavedAll((prev) => ({ ...prev, [escopoKey]: { ...(prev[escopoKey] || {}), [tipo]: { result, saved_at } } }));
 
     const handleDeleteArtifact = async (tipo) => {
         try {
-            await api.delete(`/ai/estudio/${livroId}/artifacts/${tipo}`);
-            setSavedInfo((p) => { const n = { ...p }; delete n[tipo]; return n; });
+            await api.delete(`/ai/estudio/${livroId}/artifacts/${tipo}`, { params: { escopo } });
+            setSavedAll((prev) => {
+                const forEscopo = { ...(prev[escopo] || {}) };
+                delete forEscopo[tipo];
+                return { ...prev, [escopo]: forEscopo };
+            });
+            setArtifacts((prev) => { const n = { ...prev }; delete n[tipo]; return n; });
         } catch {
             toast.error('Erro ao remover.');
         }
@@ -748,8 +734,74 @@ const Estudio = () => {
         0
     );
     const pageRanges = selectedList.map((c) => ({ start: c.page_start, end: c.page_end }));
+    // Same key the backend builds in _escopo(): sorted "start-end" pairs
+    const escopo = pageRanges.map((r) => `${r.start}-${r.end}`).sort().join(',');
+    const escopoRef = useRef(escopo);
+    escopoRef.current = escopo;
+    const savedInfo = savedAll[escopo] || {};
+
+    // Show what was already generated for this selection; keep in-flight/error states of the same selection
+    useEffect(() => {
+        const saved = savedAll[escopo] || {};
+        setArtifacts((prev) => {
+            const next = {};
+            Object.entries(saved).forEach(([tipo, s]) => {
+                next[tipo] = { result: s.result, loading: false, error: null, escopo };
+            });
+            Object.entries(prev).forEach(([tipo, s]) => {
+                if (s.escopo === escopo && (s.loading || s.error || s.pending)) next[tipo] = s;
+            });
+            return next;
+        });
+        setExpandedArtifacts(new Set(Object.keys(saved)));
+    }, [escopo, savedAll]);
+
+    // ─── Persist chapter selection per book so returning restores it ────────
+    const selectionKey = `estudio-selecao-${livroId}`;
+    const selectionRestored = useRef(false);
+    useEffect(() => {
+        if (chaptersLoading || selectionRestored.current) return;
+        selectionRestored.current = true;
+        try {
+            const stored = JSON.parse(localStorage.getItem(selectionKey) || 'null');
+            if (!stored) return;
+            const manual = Array.isArray(stored.manual) ? stored.manual : [];
+            const validIds = new Set([...chapters, ...manual].map((c) => c.id));
+            setManualChapters(manual);
+            setSelectedIds(new Set((stored.ids || []).filter((id) => validIds.has(id))));
+        } catch {}
+    }, [chaptersLoading, chapters, selectionKey]);
+
+    useEffect(() => {
+        if (!selectionRestored.current) return;
+        try {
+            localStorage.setItem(selectionKey, JSON.stringify({ ids: [...selectedIds], manual: manualChapters }));
+        } catch {}
+    }, [selectedIds, manualChapters, selectionKey]);
+
+    // Other selections that already have generated material, to jump back to them
+    const otherEscopos = Object.entries(savedAll)
+        .filter(([key, tipos]) => key !== escopo && Object.keys(tipos).length > 0)
+        .map(([key, tipos]) => {
+            const ranges = key ? key.split(',') : [];
+            const matched = ranges.map((r) => allChapters.find((c) => `${c.page_start}-${c.page_end}` === r));
+            return {
+                key,
+                count: Object.keys(tipos).length,
+                ids: matched.every(Boolean) ? matched.map((c) => c.id) : null,
+                label: ranges.length === 0
+                    ? 'Livro inteiro'
+                    : matched.every(Boolean)
+                        ? matched.map((c) => c.title).join(' + ')
+                        : ranges.map((r) => `p. ${r.replace('-', '–')}`).join(', '),
+            };
+        });
 
     // ─── Load book info ──────────────────────────────────────────────────────
+    useEffect(() => {
+        api.post(`/recentes/${livroId}`, null, { params: { origem: 'estudio' } }).catch(() => {});
+    }, [livroId]);
+
     useEffect(() => {
         api.get(`/documents/${livroId}/details`)
             .then((r) => setLivro(r.data))
@@ -873,7 +925,12 @@ const Estudio = () => {
 
     // ─── Generate artifact ────────────────────────────────────────────────────
     const generateArtifact = async (tipo) => {
-        setArtifacts((prev) => ({ ...prev, [tipo]: { loading: true, result: null, error: null } }));
+        const genEscopo = escopo; // selection may change while the model is working
+        // Only touch the visible state if the user is still on the same selection
+        const setState = (state) =>
+            escopoRef.current === genEscopo &&
+            setArtifacts((prev) => ({ ...prev, [tipo]: { ...state, escopo: genEscopo } }));
+        setState({ loading: true, result: null, error: null });
         // Auto-expand when starting generation
         setExpandedArtifacts((prev) => new Set([...prev, tipo]));
 
@@ -908,26 +965,28 @@ const Estudio = () => {
                         if (data === '[DONE]') break;
                         try {
                             const parsed = JSON.parse(data);
-                            if (parsed.error)      { setArtifacts((p) => ({ ...p, [tipo]: { loading: false, result: null, error: parsed.error } })); return; }
+                            if (parsed.error)      { setState({ loading: false, result: null, error: parsed.error }); return; }
+                            if (parsed.saved_at) { rememberSaved(genEscopo, tipo, text, parsed.saved_at); setState({ loading: false, result: text, error: null }); continue; }
                             if (parsed.token)      text += parsed.token;
-                            setArtifacts((p) => ({ ...p, [tipo]: { loading: false, result: text, error: null } }));
+                            setState({ loading: false, pending: true, result: text, error: null });
                         } catch {}
                     }
                 }
             } catch (e) {
-                setArtifacts((prev) => ({ ...prev, [tipo]: { loading: false, result: null, error: e.message } }));
+                setState({ loading: false, result: null, error: e.message });
             }
         } else {
             // Non-streaming JSON
             try {
                 const { data } = await api.post(`/ai/estudio/${livroId}/artifact`, { tipo, page_ranges: pageRanges });
                 if (data.error) {
-                    setArtifacts((prev) => ({ ...prev, [tipo]: { loading: false, result: null, error: data.error } }));
+                    setState({ loading: false, result: null, error: data.error });
                 } else {
-                    setArtifacts((prev) => ({ ...prev, [tipo]: { loading: false, result: data.content, error: null } }));
+                    rememberSaved(data.escopo ?? genEscopo, tipo, data.content, data.saved_at);
+                    setState({ loading: false, result: data.content, error: null });
                 }
             } catch (e) {
-                setArtifacts((prev) => ({ ...prev, [tipo]: { loading: false, result: null, error: e.response?.data?.detail || e.message } }));
+                setState({ loading: false, result: null, error: e.response?.data?.detail || e.message });
             }
         }
     };
@@ -1239,6 +1298,26 @@ const Estudio = () => {
                                 </div>
                             )}
 
+                            {otherEscopos.length > 0 && (
+                                <div className="bg-white border border-gray-200 rounded-xl p-3 mb-4">
+                                    <p className="text-xs font-semibold text-gray-500 mb-2">Já gerado para outras seleções</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        {otherEscopos.map((o) => (
+                                            <button
+                                                key={o.key || 'livro'}
+                                                onClick={() => o.ids ? setSelectedIds(new Set(o.ids)) : setSelectedIds(new Set())}
+                                                disabled={!o.ids && o.key !== ''}
+                                                title={o.ids || o.key === '' ? 'Selecionar estes capítulos' : 'Capítulos não encontrados no sumário atual'}
+                                                className="max-w-full flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-gray-200 text-xs text-gray-700 hover:border-purple-400 hover:text-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                                            >
+                                                <span className="truncate">{o.label}</span>
+                                                <span className="flex-shrink-0 bg-gray-100 rounded px-1.5 text-gray-500">{o.count}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="space-y-2">
                                 {ARTIFACT_TYPES.map((art) => {
                                     const state = artifacts[art.id];
@@ -1280,29 +1359,21 @@ const Estudio = () => {
                                                     )}
                                                 </button>
 
-                                                {/* Salvar / Salvo */}
-                                                {hasResult && (
-                                                    savedInfo[art.id] ? (
-                                                        <div className="flex-shrink-0 flex items-center gap-1 bg-green-50 border border-green-200 text-green-700 rounded-lg px-2 py-1 text-xs font-semibold">
-                                                            <CheckCircle size={11} />
-                                                            <span>{formatSavedAt(savedInfo[art.id].saved_at)}</span>
-                                                            <button
-                                                                onClick={() => handleDeleteArtifact(art.id)}
-                                                                className="ml-0.5 text-gray-400 hover:text-red-500 transition leading-none"
-                                                                title="Remover do banco"
-                                                            >×</button>
-                                                        </div>
-                                                    ) : (
+                                                {/* Salvo automaticamente */}
+                                                {hasResult && savedInfo[art.id] && (
+                                                    <div
+                                                        className="flex-shrink-0 flex items-center gap-1 bg-green-50 border border-green-200 text-green-700 rounded-lg px-2 py-1 text-xs font-semibold"
+                                                        title="Salvo automaticamente para estes capítulos"
+                                                    >
+                                                        <CheckCircle size={11} />
+                                                        <span>{formatSavedAt(savedInfo[art.id].saved_at)}</span>
                                                         <button
-                                                            onClick={() => handleSaveArtifact(art.id)}
-                                                            disabled={savingArtifact.has(art.id)}
-                                                            className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1.5 border border-gray-300 text-gray-500 rounded-lg text-xs hover:border-purple-400 hover:text-purple-600 disabled:opacity-50 transition"
-                                                            title="Salvar no banco"
-                                                        >
-                                                            {savingArtifact.has(art.id) ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
-                                                            {savingArtifact.has(art.id) ? '…' : 'Salvar'}
-                                                        </button>
-                                                    )
+                                                            onClick={() => handleDeleteArtifact(art.id)}
+                                                            className="ml-0.5 text-gray-400 hover:text-red-500 transition leading-none"
+                                                            title="Excluir"
+                                                            aria-label={`Excluir ${art.label}`}
+                                                        >×</button>
+                                                    </div>
                                                 )}
 
                                                 {/* Chevron de toggle */}

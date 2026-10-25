@@ -58,6 +58,11 @@ export default function EpubReader() {
         }, 3000); // 3s — mesmo padrão do PDFReader
     }, [id]);
 
+    // Registra o livro em "Recentes"
+    useEffect(() => {
+        api.post(`/recentes/${id}`, null, { params: { origem: 'epub' } }).catch(() => {});
+    }, [id]);
+
     useEffect(() => {
         if (!viewerRef.current) return;
 

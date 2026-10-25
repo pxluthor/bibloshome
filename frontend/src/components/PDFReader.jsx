@@ -95,6 +95,11 @@ const PDFReader = () => {
         }
     };
 
+    // Registra o livro em "Recentes"
+    useEffect(() => {
+        api.post(`/recentes/${id}`, null, { params: { origem: 'leitor' } }).catch(() => {});
+    }, [id]);
+
     // Restaura a última página lida ao carregar
     useEffect(() => {
         if (lastPage && lastPage > 1 && !initializedRef.current) {

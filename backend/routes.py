@@ -10,7 +10,7 @@ from sqlalchemy import or_, func as sa_func
 from typing import List, Optional
 from datetime import datetime
 from database import get_session
-from models import utcnow, Usuario, UsuarioCreate, UsuarioLogin, ListaLeitura, ListaLeituraUpdate, ColecaoLivro, ColecaoLivroItem, ColecaoLivroCreate, Livro, Anotacao, AnotacaoUpdate, LivroRead, LivroUpdate, PedidoLivro, PedidoLivroCreate, PedidoLivroUpdate
+from models import utcnow, LivroAcesso, Usuario, UsuarioCreate, UsuarioLogin, ListaLeitura, ListaLeituraUpdate, ColecaoLivro, ColecaoLivroItem, ColecaoLivroCreate, Livro, Anotacao, AnotacaoUpdate, LivroRead, LivroUpdate, PedidoLivro, PedidoLivroCreate, PedidoLivroUpdate
 from services import get_pdf_service, get_translation_service, PDFService, TranslationService
 from auth import get_password_hash, verify_password, create_access_token, get_current_user, oauth2_scheme
 
@@ -363,6 +363,54 @@ def update_list_status(
     return {"status": "success", "new_status": status_data.status}
 
 # --- 4. VER MINHA LISTA ---
+RECENTES_ORIGENS = {"leitor", "epub", "estudio"}
+
+
+@router.post("/recentes/{livro_id}", status_code=204)
+def registrar_acesso(
+    livro_id: int,
+    origem: str = Query("leitor"),
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    if origem not in RECENTES_ORIGENS:
+        raise HTTPException(status_code=400, detail="Origem inválida")
+    if not session.get(Livro, livro_id):
+        raise HTTPException(status_code=404, detail="Livro não encontrado")
+
+    acesso = session.exec(
+        select(LivroAcesso)
+        .where(LivroAcesso.usuario_id == current_user.id)
+        .where(LivroAcesso.livro_id == livro_id)
+    ).first()
+    if acesso:
+        acesso.origem = origem
+        acesso.acessado_em = utcnow()
+    else:
+        session.add(LivroAcesso(usuario_id=current_user.id, livro_id=livro_id, origem=origem))
+    session.commit()
+    return Response(status_code=204)
+
+
+@router.get("/recentes")
+def listar_recentes(
+    limit: int = Query(24, ge=1, le=100),
+    current_user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    rows = session.exec(
+        select(LivroAcesso, Livro)
+        .join(Livro, LivroAcesso.livro_id == Livro.id)
+        .where(LivroAcesso.usuario_id == current_user.id)
+        .order_by(LivroAcesso.acessado_em.desc())
+        .limit(limit)
+    ).all()
+    return [
+        {"livro": LivroRead.model_validate(livro), "origem": acesso.origem, "acessado_em": acesso.acessado_em.isoformat()}
+        for acesso, livro in rows
+    ]
+
+
 @router.get("/my-list")
 def get_my_list(current_user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)):
     # Busca ListaLeitura, Livro e Anotacao (para pegar o progresso)

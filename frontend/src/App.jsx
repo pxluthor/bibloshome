@@ -144,6 +144,15 @@ function App() {
                 />
 
                 <Route
+                    path="/recentes"
+                    element={
+                        <PrivateRoute>
+                            <DocumentList />
+                        </PrivateRoute>
+                    }
+                />
+
+                <Route
                     path="/meus-livros"
                     element={
                         <PrivateRoute>
